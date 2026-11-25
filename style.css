@@ -1,15 +1,16 @@
 :root {
   --bg: #07131c;
   --fg: #cfe3ee;
-  --dim: #6f8794;
+  --dim: #8ea6b3;
   --line: #24404f;
   --accent: #7ec8e3;
+  --veil: rgba(0, 0, 0, .55);
   --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
 }
 
 * { box-sizing: border-box; margin: 0; }
 
-html, body { height: 100%; }
+html, body { height: 100%; overflow: hidden; }
 
 body {
   background: var(--bg);
@@ -18,39 +19,38 @@ body {
   font-size: 14px;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
   transition: background .6s;
 }
 
-#app {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: max(10px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
-}
+/* el estanque ocupa toda la ventana; lo demás flota encima */
+#app { position: fixed; inset: 0; overflow: hidden; }
+#stage { position: absolute; inset: 0; line-height: 0; }
+#pond { position: absolute; left: 0; top: 0; touch-action: manipulation; cursor: pointer; }
 
 #hud {
-  width: 100%;
-  max-width: 760px;
+  position: absolute;
+  top: 0; left: 0; right: 0;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+  background: var(--veil);
+  pointer-events: none;
 }
-#zoneName { color: var(--accent); }
-#stats { display: flex; gap: 14px; color: var(--dim); }
+#zoneName { color: #fff; }
+#stats { display: flex; gap: 16px; color: var(--dim); }
 #stats b { color: var(--fg); font-weight: 400; }
-
-#stage { position: relative; line-height: 0; }
-#pond { touch-action: manipulation; cursor: pointer; }
 
 #toast {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  top: calc(max(10px, env(safe-area-inset-top)) + 44px);
   transform: translateX(-50%);
-  padding: 6px 10px;
+  max-width: calc(100% - 24px);
+  padding: 7px 12px;
   background: var(--bg);
   border: 1px solid var(--line);
   line-height: 1.3;
@@ -62,13 +62,38 @@ body {
 #toast.on { opacity: 1; }
 
 #info {
-  min-height: 1.4em;
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 58px);
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  padding: 5px 10px;
+  background: var(--veil);
   color: var(--dim);
-  text-align: center;
   white-space: pre;
+  pointer-events: none;
 }
 
-#nav { display: flex; gap: 8px; width: 100%; max-width: 760px; }
+#zoom {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right));
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  gap: 8px;
+}
+#zoom button { width: 44px; height: 44px; padding: 0; font-size: 22px; line-height: 1; background: var(--veil); }
+
+#nav {
+  position: absolute;
+  left: 50%;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  width: calc(100% - 24px);
+  max-width: 440px;
+}
 button {
   font: inherit;
   color: var(--fg);
@@ -79,7 +104,7 @@ button {
 }
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { color: var(--dim); cursor: default; opacity: .6; }
-#nav button { flex: 1; }
+#nav button { flex: 1; background: var(--veil); padding: 12px 14px; }
 
 /* paneles */
 #panel {
@@ -101,6 +126,7 @@ button:disabled { color: var(--dim); cursor: default; opacity: .6; }
   background: var(--bg);
   border: 1px solid var(--line);
   padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+  user-select: text;
 }
 @media (min-width: 700px) {
   #panel { align-items: center; }

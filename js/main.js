@@ -1,20 +1,48 @@
-/* Estanque ASCII — motor del juego. Sin dependencias, sin build. */
+/* Estanque ASCII — motor del juego. Sin dependencias, sin build.
+ *
+ * El mundo es un mapa fijo: cada zona es un estanque del mismo tamaño en su sitio de la
+ * cuadrícula. Una cámara (arrastrar para moverse, rueda / pellizco / botones para el zoom)
+ * muestra la parte que cabe en pantalla: en ordenador se ve más mapa que en móvil.
+ * Al empezar solo existe el estanque básico; cada zona desbloqueada amplía el mapa.
+ *
+ * La escena se pinta de verdad (agua, carpas con cuerpo y aletas, decorado) en un lienzo
+ * con un píxel por celda. Después cada píxel se convierte en UNA celda de texto: el brillo
+ * elige la letra, el color del píxel colorea letra y fondo, y se añade resplandor.
+ */
 (() => {
   const { RARITY, SPECIES, ZONES } = DATA;
 
   // ───────────────────────── constantes ─────────────────────────
-  const COLS = 56, ROWS = 30;
+  const MAX_CELLS = 26000;               // tope de celdas (limita el coste por fotograma)
+  const MIN_CELL = 5;                    // tamaño mínimo de celda en píxeles CSS
   const CAP = 6;                         // carpas máximas por zona
   const FOOD_MAX = 12, FOOD_EVERY = 5;   // comida: máximo y segundos por unidad
   const HUNGER_RATE = 100 / 360;         // de 100 a 0 en 6 min
-  const FEED = 30;                       // hambre que quita un pellet
-  const STAGE_XP = [0, 3, 8, 16, 30];    // pellets comidos para cada tamaño
+  const FEED = 30;                       // hambre que quita una bolita
+  const STAGE_XP = [0, 3, 8, 16, 30];    // bolitas comidas para cada tamaño
   const EGG_TIME = (z) => 20 * (z + 1);  // segundos de incubación
-  const SAVE_KEY = 'estanque-ascii-v1';
+  const SAVE_KEY = 'estanque-ascii-v2';
+  const LEN = [7, 9, 11, 14, 17];        // largo de la carpa en unidades de mundo
+  const M = 8;                           // puntos de la columna de cada carpa
 
+  // mapa: cada zona ocupa una casilla de TW×TH unidades; GRID[fila][columna] = índice de zona
+  const TW = 92, TH = 100;
+  const GRID = [[0, 1, 2], [5, 4, 3]];
+  const RX = 29.5, RY = 31.5;            // radios del estanque dentro de su casilla
+  const VW = 64, VH = 68;                // tamaño de referencia del estanque (para el decorado)
+  const MARGIN = 26;                     // lo que se ve de niebla más allá del mapa descubierto
+  const ZOOM_MAX = 26;                   // píxeles CSS por unidad de mundo
+
+  const ZPOS = [];
+  GRID.forEach((row, r) => row.forEach((zi, c) => { ZPOS[zi] = [c, r]; }));
+  const zoneCenter = (zi) => [ZPOS[zi][0] * TW, ZPOS[zi][1] * TH];
+  const zoneAtTile = (c, r) => (GRID[r] && GRID[r][c] !== undefined ? GRID[r][c] : -1);
+  const zoneAt = (wx, wy) => zoneAtTile(Math.round(wx / TW), Math.round(wy / TH));
+
+  // sprite de texto: solo para el álbum
   const TAILS = [['~', '-'], ['><', '<>'], ['><', '<>'], ['><', '<>'], ['><', '<>']];
-  const REST  = ['º>', 'º>', '(º>', '((º>', '(((º>'];
-  const MIRROR = { '(': ')', ')': '(', '<': '>', '>': '<' };
+  const REST = ['º>', 'º>', '(º>', '((º>', '(((º>'];
+  const baseSprite = (stage, frame) => TAILS[stage][frame % 2] + REST[stage];
 
   // ───────────────────────── utilidades ─────────────────────────
   const $ = (s) => document.querySelector(s);
@@ -23,24 +51,37 @@
   const hash = (x, y) => { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); };
   const stageOf = (xp) => { let s = 0; STAGE_XP.forEach((t, i) => { if (xp >= t) s = i; }); return s; };
   const fmt = (n) => (n >= 10000 ? (n / 1000).toFixed(1) + 'k' : String(Math.floor(n)));
-  const CX = (COLS - 1) / 2, CY = (ROWS - 1) / 2;
-  const pondR = (x, y) => Math.hypot((x - CX) / (CX - 0.5), (y - CY) / (CY - 0.5));
-  const inWater = (x, y, lim = 0.78) => pondR(x, y) < lim;
-  const randomWaterPoint = () => {
-    for (let i = 0; i < 60; i++) { const x = rnd(3, COLS - 3), y = rnd(3, ROWS - 3); if (inWater(x, y)) return [x, y]; }
-    return [CX, CY];
-  };
+  const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const smooth = (v) => { v = clamp(v, 0, 1); return v * v * (3 - 2 * v); };
+  const lenOf = (stage) => LEN[stage];
+
+  // distancia normalizada al centro del estanque (1 = orilla), con la orilla irregular
+  // y distinta en cada zona. Las coordenadas son locales: (0,0) es el centro del estanque.
+  function pondR(x, y, zi) {
+    const nx = x / RX, ny = y / RY;
+    const th = Math.atan2(ny, nx);
+    return Math.hypot(nx, ny) / (1 + 0.05 * Math.sin(3 * th + 1 + zi * 1.7) + 0.035 * Math.sin(5 * th + 2 + zi * 0.9));
+  }
+  const inWater = (x, y, lim, zi) => pondR(x, y, zi) < lim;
+  function randomWaterPoint(zi) {
+    for (let i = 0; i < 80; i++) { const x = rnd(-VW / 2 + 6, VW / 2 - 6), y = rnd(-VH / 2 + 6, VH / 2 - 6); if (inWater(x, y, 0.8, zi)) return [x, y]; }
+    return [0, 0];
+  }
+  function edgePoint(a, lim, zi) {
+    const dx = Math.cos(a), dy = Math.sin(a);
+    for (let d = 0; d < 60; d += 0.5) if (pondR(dx * d, dy * d, zi) >= lim) return [dx * d, dy * d];
+    return [0, 0];
+  }
 
   // ───────────────────────── estado y guardado ─────────────────────────
   function fresh() {
     const s = {
-      perlas: 40, food: FOOD_MAX, foodT: 0, zone: 0,
+      perlas: 40, food: FOOD_MAX, foodT: 0,
       unlocked: ZONES.map((_, i) => i === 0),
       zones: ZONES.map(() => ({ carps: [], perlas: [] })),
-      album: {}, eggs: [], seen: Date.now(),
+      album: {}, eggs: [], seen: Date.now(), cam: null,
     };
-    const [x, y] = [CX, CY];
-    s.zones[0].carps.push({ sp: 'gris', hunger: 80, xp: 0, x, y });
+    s.zones[0].carps.push({ sp: 'gris', hunger: 80, xp: 0 });
     s.album.gris = 1;
     return s;
   }
@@ -56,7 +97,7 @@
   }
 
   function save() {
-    S.seen = Date.now();
+    S.seen = Date.now(); S.cam = { x: +cam.x.toFixed(1), y: +cam.y.toFixed(1), z: +cam.z.toFixed(2) };
     try {
       const out = { ...S, zones: S.zones.map((z) => ({
         carps: z.carps.map((c) => ({ sp: c.sp, hunger: c.hunger, xp: c.xp, x: c.x, y: c.y, pt: c.pt })),
@@ -76,243 +117,424 @@
   })();
 
   // ───────────────────────── carpas ─────────────────────────
-  function initCarp(c, active) {
-    if (c.x == null || !inWater(c.x, c.y, 0.85)) { [c.x, c.y] = randomWaterPoint(); }
+  // x,y de cada carpa, bolita, perla y onda son locales a su zona
+  function resetSpine(c) {
+    const sl = lenOf(stageOf(c.xp)) / (M - 1);
+    c.spine = [];
+    for (let i = 0; i < M; i++) c.spine.push({ x: c.x - Math.cos(c.ang) * sl * i, y: c.y - Math.sin(c.ang) * sl * i });
+  }
+
+  function initCarp(c, zi) {
+    c.zi = zi;
+    if (c.x == null || !inWater(c.x, c.y, 0.85, zi)) [c.x, c.y] = randomWaterPoint(zi);
     c.ang = Math.random() * Math.PI * 2;
-    c.face = Math.cos(c.ang) >= 0 ? 1 : -1;
-    c.tx = c.x; c.ty = c.y; c.retarget = 0;
-    c.trail = []; c.trailT = 0;
+    c.tx = c.x; c.ty = c.y; c.retarget = 0; c.speed = 0;
+    c.phase = Math.random() * 6;
     if (c.pt == null) c.pt = rnd(6, 14);
+    resetSpine(c);
     return c;
   }
-  S.zones.forEach((z) => z.carps.forEach((c) => initCarp(c)));
+  S.zones.forEach((z, zi) => {
+    z.carps.forEach((c) => initCarp(c, zi));
+    z.perlas.forEach((p) => { if (!inWater(p.x, p.y, 0.85, zi)) [p.x, p.y] = randomWaterPoint(zi); });
+  });
 
   const perlaValue = (c) => Math.max(1, RARITY[SPECIES[c.sp].r].mult * (stageOf(c.xp) + 1));
 
-  function baseSprite(stage, frame) {
-    return TAILS[stage][frame % 2] + REST[stage];
-  }
-
-  // ───────────────────────── ámbito del mundo ─────────────────────────
-  let t = 0;                 // segundos de juego
-  let pellets = [];          // comida flotando (solo zona activa)
-  let ripples = [];          // ondas
-  let selected = null;       // carpa elegida
+  // ───────────────────────── mundo ─────────────────────────
+  let t = 0;                                   // segundos de juego
+  let pellets = ZONES.map(() => []);           // comida flotando, por zona
+  let ripples = [];                            // ondas {zi,x,y,...}
+  let selected = null;                         // carpa elegida
   let foamTimer = 0;
 
-  const zoneNow = () => S.zones[S.zone];
-  const ZN = () => ZONES[S.zone];
+  function ripple(zi, x, y, small) { ripples.push({ zi, x, y, born: t, max: small ? 1 : 2, speed: small ? 6 : 10 }); }
+  const status = (zi) => (S.unlocked[zi] ? 2 : zi > 0 && S.unlocked[zi - 1] ? 1 : 0);   // 2 abierta · 1 siguiente · 0 niebla
 
-  function ripple(x, y, small) { ripples.push({ x, y, born: t, max: small ? 0.9 : 1.7, speed: small ? 4 : 6 }); }
+  // ───────────────────────── cámara ─────────────────────────
+  const cam = { x: 0, y: 0, z: 8 };            // z = píxeles CSS por unidad de mundo
+  let fly = null, camDirty = true;
+  let W = 1, H = 1, cellCss = 8, GW = 1, GH = 1;
+  const U = () => cam.z / cellCss;             // celdas por unidad
 
-  // ───────────────────────── buffer de caracteres ─────────────────────────
-  const bufCh = new Array(COLS * ROWS).fill(' ');
-  const bufCo = new Array(COLS * ROWS).fill('#fff');
-  const bufAl = new Array(COLS * ROWS).fill(1);
-  function clearBuf() { bufCh.fill(' '); }
-  function put(x, y, ch, color, alpha = 1) {
-    x = Math.round(x); y = Math.round(y);
-    if (x < 0 || y < 0 || x >= COLS || y >= ROWS || ch === ' ') return;
-    const i = y * COLS + x;
-    bufCh[i] = ch; bufCo[i] = color; bufAl[i] = alpha;
+  function bounds() {
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    S.unlocked.forEach((on, zi) => {
+      if (!on) return;
+      const [cx, cy] = zoneCenter(zi);
+      x0 = Math.min(x0, cx - TW / 2); x1 = Math.max(x1, cx + TW / 2); y0 = Math.min(y0, cy - TH / 2); y1 = Math.max(y1, cy + TH / 2);
+    });
+    return { x0, y0, x1, y1 };
   }
-  function text(x, y, s, color, alpha = 1) { for (let i = 0; i < s.length; i++) put(x + i, y, s[i], color, alpha); }
+  // lo más lejos que se puede alejar: hasta ver todo el mapa descubierto
+  function zoomMin() {
+    const b = bounds();
+    return Math.max(1.8, Math.min(W / (b.x1 - b.x0 + 2 * MARGIN), H / (b.y1 - b.y0 + 2 * MARGIN)));
+  }
+  const defaultZoom = () => clamp(W / 70, 4.5, 8);
 
-  // ───────────────────────── escena: agua y orilla ─────────────────────────
-  const SHORE_CH = ['#', '%', '&', '@'];
-  const GRASS_CH = [',', '"', "'", ';'];
-  function drawBase(zone) {
-    const dark = zone.id === 'cueva' ? 0.7 : 1;
-    for (let y = 0; y < ROWS; y++) {
-      for (let x = 0; x < COLS; x++) {
-        const h = hash(x, y);
-        const r = pondR(x, y);
-        const edge = 0.9 + 0.05 * h;
-        if (r < edge) {
-          const v = Math.sin(x * 0.35 + t * 1.2 + Math.sin(y * 0.4 + t * 0.5) * 2) + Math.sin(y * 0.5 - t * 0.8 + x * 0.1);
-          const a = (0.12 + 0.3 * ((v + 2) / 4)) * dark * (1 - 0.35 * clamp((r - 0.6) / 0.3, 0, 1));
-          const ch = v > 1.2 ? '~' : v > 0.5 ? '-' : v > -0.2 ? '.' : v > -1 ? ',' : ' ';
-          put(x, y, ch, zone.water, a);
-        } else if (r < 1.02 + 0.04 * h) {
-          put(x, y, SHORE_CH[Math.floor(h * 4) % 4], zone.shore, 0.55 + 0.4 * h);
-        } else {
-          put(x, y, GRASS_CH[Math.floor(h * 4) % 4], zone.grass, 0.18 + 0.3 * h);
-        }
+  function clampCam() {
+    cam.z = clamp(cam.z, zoomMin(), ZOOM_MAX);
+    const b = bounds(), vw = W / cam.z, vh = H / cam.z;
+    const x0 = b.x0 - MARGIN, x1 = b.x1 + MARGIN, y0 = b.y0 - MARGIN, y1 = b.y1 + MARGIN;
+    cam.x = x1 - x0 <= vw ? (x0 + x1) / 2 : clamp(cam.x, x0 + vw / 2, x1 - vw / 2);
+    cam.y = y1 - y0 <= vh ? (y0 + y1) / 2 : clamp(cam.y, y0 + vh / 2, y1 - vh / 2);
+    camDirty = true;
+  }
+  function screenToWorld(px, py) { const u = U(); return [cam.x + (px / cellCss - GW / 2) / u, cam.y + (py / cellCss - GH / 2) / u]; }
+  function zoomAt(px, py, factor) {
+    const [bx, by] = screenToWorld(px, py);
+    cam.z = clamp(cam.z * factor, zoomMin(), ZOOM_MAX);
+    const [ax, ay] = screenToWorld(px, py);
+    cam.x += bx - ax; cam.y += by - ay; fly = null; clampCam();
+  }
+  function flyTo(x, y, z) { fly = { x, y, z: z || cam.z }; }
+  function flyToZone(zi) { const [x, y] = zoneCenter(zi); flyTo(x, y, defaultZoom()); }
+
+  // ───────────────────────── lienzo de origen (1 píxel = 1 celda) ─────────────────────────
+  const src = document.createElement('canvas');
+  const g = src.getContext('2d', { willReadFrequently: true });
+  let img = null, sinX = null, sinY = null;
+  // datos por celda: dependen solo de la cámara, así que se recalculan cuando se mueve
+  let zIdx, rArr, hArr, h2Arr, exArr, eyArr, nzx, nzy;
+
+  const ZC = ZONES.map((z) => {
+    const w = hex(z.water), dark = z.id === 'cueva' ? 0.7 : z.id === 'luna' ? 0.8 : 1;
+    return { deep: w.map((v) => v * 0.38 * dark), light: w.map((v) => v * 0.95 * dark), shore: hex(z.shore), grass: hex(z.grass) };
+  });
+
+  function buildCells() {
+    const u = U();
+    for (let y = 0; y < GH; y++) {
+      const wy = cam.y + (y + 0.5 - GH / 2) / u, tr = Math.round(wy / TH);
+      for (let x = 0; x < GW; x++) {
+        const n = y * GW + x, wx = cam.x + (x + 0.5 - GW / 2) / u, tc = Math.round(wx / TW), zi = zoneAtTile(tc, tr);
+        zIdx[n] = zi;
+        hArr[n] = hash(Math.floor(wx), Math.floor(wy)); h2Arr[n] = hash(Math.floor(wx * 0.5), Math.floor(wy * 0.5));
+        if (zi < 0) { rArr[n] = 9; continue; }
+        const lx = wx - tc * TW, ly = wy - tr * TH;
+        exArr[n] = TW / 2 - Math.abs(lx); eyArr[n] = TH / 2 - Math.abs(ly);
+        nzx[n] = zoneAtTile(tc + (lx >= 0 ? 1 : -1), tr); nzy[n] = zoneAtTile(tc, tr + (ly >= 0 ? 1 : -1));
+        rArr[n] = Math.abs(lx) > RX * 1.3 || Math.abs(ly) > RY * 1.3 ? 2 : pondR(lx, ly, zi);
       }
     }
+    camDirty = false;
   }
 
-  // posiciones fijas (generadas una vez) de nenúfares
-  function makePads(n, seed) {
+  // agua con cáusticas, orilla y terreno; las zonas sin abrir quedan en niebla
+  function paintGround() {
+    if (camDirty) buildCells();
+    const d = img.data, u = U(), st = ZONES.map((_, i) => status(i));
+    for (let x = 0; x < GW; x++) sinX[x] = Math.sin((cam.x + (x + 0.5 - GW / 2) / u) * 0.23 - t * 0.28);
+    for (let y = 0; y < GH; y++) sinY[y] = Math.sin((cam.y + (y + 0.5 - GH / 2) / u) * 0.27 + t * 0.35);
+    for (let y = 0; y < GH; y++) {
+      const yv = cam.y + (y + 0.5 - GH / 2) / u, ay = sinY[y] * 2.1;
+      for (let x = 0; x < GW; x++) {
+        const n = y * GW + x, i = n * 4, h = hArr[n], zi = zIdx[n];
+        let R, G, B;
+        if (zi < 0 || st[zi] === 0) {                       // niebla
+          const v = 5 + 5 * h; R = v; G = v + 3; B = v + 7;
+        } else {
+          const z = ZC[zi], r = rArr[n], xv = cam.x + (x + 0.5 - GW / 2) / u, s2 = st[zi];
+          if (r < 0.93) {
+            const s = smooth((r - 0.3) / 0.62);
+            R = z.deep[0] + (z.light[0] - z.deep[0]) * s; G = z.deep[1] + (z.light[1] - z.deep[1]) * s; B = z.deep[2] + (z.light[2] - z.deep[2]) * s;
+            if (s2 === 2) {
+              const c1 = Math.sin(xv * 0.42 + t * 0.8 + ay) * Math.sin(yv * 0.38 - t * 0.65 + sinX[x] * 2.1);
+              const k = c1 > 0 ? c1 * c1 * 0.7 : 0;
+              R = R * (1 + k) + k * 28; G = G * (1 + k) + k * 34; B = B * (1 + k) + k * 40;
+            }
+          } else if (r < 1.0) {
+            const foam = 0.25 + 0.2 * Math.sin(t * 1.6 + xv * 0.7 + yv * 0.5), m = 0.75 + 0.5 * h, f = 255 * foam * 0.3;
+            R = z.shore[0] * m + f; G = z.shore[1] * m + f; B = z.shore[2] * m + f;
+          } else {
+            const rock = h2Arr[n] > 0.82, m = (rock ? 0.55 : 0.28) + 0.35 * h, base = rock ? z.shore : z.grass;
+            R = base[0] * m; G = base[1] * m; B = base[2] * m;
+          }
+          if (s2 === 1) { R *= 0.2; G *= 0.2; B *= 0.2; }   // la siguiente zona se intuye en la oscuridad
+          // el borde del mapa descubierto se funde con la niebla
+          const ox = nzx[n], oy = nzy[n];
+          const fx = ox >= 0 && S.unlocked[ox] ? 1 : smooth(exArr[n] / 12), fy = oy >= 0 && S.unlocked[oy] ? 1 : smooth(eyArr[n] / 12);
+          const k = 0.08 + 0.92 * Math.min(fx, fy);
+          R = R * k + 6 * (1 - k); G = G * k + 9 * (1 - k); B = B * k + 13 * (1 - k);
+        }
+        d[i] = R; d[i + 1] = G; d[i + 2] = B; d[i + 3] = 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+  }
+
+  // ───────────────────────── decorado (coordenadas locales de la zona) ─────────────────────────
+  function makePads(n, seed, zi) {
     const out = []; let k = 0;
-    while (out.length < n && k < 400) {
-      const x = 4 + hash(k, seed) * (COLS - 9), y = 4 + hash(seed, k + 5) * (ROWS - 9);
-      if (inWater(x, y, 0.72)) out.push({ x, y, f: hash(k, k) > 0.6, p: hash(k, 1) * 6 });
+    while (out.length < n && k < 900) {
+      const x = (hash(k, seed) - 0.5) * (VW - 12), y = (hash(seed, k + 5) - 0.5) * (VH - 12);
+      if (inWater(x, y, 0.72, zi)) out.push({ x, y, r: 2.4 + hash(k, 3) * 1.6, f: hash(k, k) > 0.6, p: hash(k, 1) * 6 });
       k++;
     }
     return out;
   }
-  const PADS = { estanque: makePads(6, 3), nenufares: makePads(16, 9) };
+  const padCache = {};
+  const padsOf = (zi) => padCache[zi] || (padCache[zi] = makePads(ZONES[zi].id === 'nenufares' ? 18 : 7, zi * 3 + 1, zi));
 
   function drawPads(list) {
     list.forEach((p) => {
-      const dx = Math.sin(t * 0.4 + p.p) * 0.6;
-      put(p.x + dx, p.y, '@', '#4f9d4a', 0.9);
-      put(p.x + dx + 1, p.y, '@', '#3f8a3a', 0.9);
-      if (p.f) put(p.x + dx + 0.5, p.y - 0.4, '*', '#ff8fb1', 1);
+      const x = p.x + Math.sin(t * 0.4 + p.p) * 0.7, y = p.y + Math.cos(t * 0.33 + p.p) * 0.4, a = p.p;
+      g.fillStyle = '#2f7a35'; g.beginPath(); g.moveTo(x, y); g.arc(x, y, p.r, 0.4 + a, Math.PI * 2 - 0.15 + a); g.closePath(); g.fill();
+      g.fillStyle = '#4fa24b'; g.beginPath(); g.moveTo(x, y); g.arc(x, y, p.r * 0.7, 0.4 + a, Math.PI * 2 - 0.15 + a); g.closePath(); g.fill();
+      if (p.f) {
+        g.fillStyle = '#ff8fb1'; g.beginPath(); g.arc(x, y, 1.25, 0, 7); g.fill();
+        g.fillStyle = '#ffe66d'; g.beginPath(); g.arc(x, y, 0.5, 0, 7); g.fill();
+      }
     });
   }
 
-  function drawFireflies(n, color) {
+  function glow(x, y, r, color, a) {
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, color.replace('A', a)); gr.addColorStop(1, color.replace('A', 0));
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+  }
+
+  function fireflies(n, rgb) {
     for (let i = 0; i < n; i++) {
-      const x = CX + Math.sin(t * 0.3 + i * 2.1) * (CX - 6) * Math.cos(i), y = CY + Math.cos(t * 0.25 + i * 1.3) * (CY - 5) * Math.sin(i + 1);
-      put(x, y, '.', color, 0.35 + 0.65 * Math.abs(Math.sin(t * 1.5 + i)));
+      const x = Math.sin(t * 0.3 + i * 2.1) * (RX - 8) * Math.cos(i), y = Math.cos(t * 0.25 + i * 1.3) * (RY - 8) * Math.sin(i + 1);
+      glow(x, y, 4, `rgba(${rgb},A)`, 0.25 + 0.5 * Math.abs(Math.sin(t * 1.5 + i)));
     }
   }
 
+  function vignette(strength) {
+    const gr = g.createRadialGradient(0, 0, Math.min(VW, VH) * 0.22, 0, 0, Math.max(VW, VH) * 0.66);
+    gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, `rgba(0,0,0,${strength})`);
+    g.fillStyle = gr; g.fillRect(-TW / 2, -TH / 2, TW, TH);
+  }
+
   const DECOR = {
-    estanque() {
-      drawPads(PADS.estanque);
-      for (let i = 0; i < 7; i++) {
-        const x = 6 + i * 7 + hash(i, 4) * 3, y = 3.5 + Math.abs(i - 3) * 0.2;
-        if (pondR(x, y) < 1.1) { const s = Math.sin(t * 1.6 + i); put(x, y, s > 0.4 ? '/' : s < -0.4 ? '\\' : '|', '#6aa84f', 0.8); put(x, y + 1, '|', '#6aa84f', 0.8); }
+    estanque(zi) {
+      const n = Math.round((VW + VH) / 8);
+      for (let i = 0; i < n; i++) {
+        const [x, y] = edgePoint(i * 2.399, 0.97, zi), sw = Math.sin(t * 1.5 + i) * 1.1;
+        g.strokeStyle = '#7ab955'; g.lineWidth = 0.9;
+        for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(x + k, y); g.quadraticCurveTo(x + k, y - 3, x + k + sw, y - 6 - Math.abs(k)); g.stroke(); }
       }
+      drawPads(padsOf(zi));
     },
-    nenufares() { drawPads(PADS.nenufares); drawFireflies(7, '#ffe66d'); },
-    cascada() {
-      const x0 = 25, x1 = 31;
-      for (let x = x0 - 2; x <= x1 + 2; x++) for (let y = 0; y < 3; y++) put(x, y, '#', '#6b7580', 0.9);
-      for (let x = x0; x <= x1; x++) {
-        for (let y = 2; y < 9; y++) {
-          const k = (y * 1.7 + t * 9 + x * 3.1) % 3;
-          put(x, y, k < 1 ? '|' : k < 2 ? ':' : '!', '#bfe6ff', 0.55 + 0.4 * hash(x, y + Math.floor(t * 8)));
-        }
-        const f = Math.floor(t * 6 + x) % 3;
-        put(x, 9, f === 0 ? '*' : f === 1 ? 'o' : '.', '#ffffff', 0.9);
+    nenufares(zi) { drawPads(padsOf(zi)); fireflies(7, '255,230,109'); },
+    cascada(zi) {
+      const top = -RY * 0.93, end = top + 17;
+      g.fillStyle = '#5d6772';
+      for (let x = -13; x <= 13; x += 2.2) { g.beginPath(); g.arc(x, top + hash(x, 1) * 3, 3.4, 0, 7); g.fill(); }
+      g.fillStyle = '#7a8591';
+      for (let x = -11; x <= 11; x += 3.1) { g.beginPath(); g.arc(x, top - 1 + hash(x, 2) * 2, 2.2, 0, 7); g.fill(); }
+      g.lineWidth = 1.15; g.setLineDash([3.2, 2]);
+      for (let x = -5; x <= 5; x += 1.1) {
+        g.lineDashOffset = -t * (16 + hash(x, 5) * 6);
+        g.strokeStyle = `rgba(215,242,255,${0.55 + 0.35 * hash(x, 9)})`;
+        g.beginPath(); g.moveTo(x, top + 1); g.lineTo(x + Math.sin(t + x) * 0.3, end); g.stroke();
       }
-      for (let x = x0 - 1; x <= x1 + 1; x++) put(x, 10, hash(x, Math.floor(t * 4)) > 0.5 ? '~' : '-', '#e9f6ff', 0.6);
+      g.setLineDash([]);
+      for (let x = -6; x <= 6; x += 1.3) { g.fillStyle = `rgba(255,255,255,${0.5 + 0.4 * Math.sin(t * 6 + x)})`; g.beginPath(); g.arc(x, end + 0.5, 0.9 + 0.5 * Math.abs(Math.sin(t * 5 + x)), 0, 7); g.fill(); }
       foamTimer -= 1 / 30;
-      if (foamTimer <= 0) { ripple(28, 10, false); foamTimer = 0.9; }
+      if (foamTimer <= 0) { ripple(zi, 0, end + 1, false); foamTimer = 0.9; }
     },
-    cueva() {
-      const tops = [8, 12, 17, 22, 28, 33, 38, 44, 48];
-      tops.forEach((x, i) => {
-        let y0 = 0; while (y0 < ROWS && pondR(x, y0) > 0.92) y0++;
-        const len = 1 + Math.floor(hash(i, 7) * 3);
-        for (let k = 0; k < len; k++) put(x, y0 + k - 1, k === len - 1 ? 'v' : '|', '#8a7aa8', 0.9);
+    cueva(zi) {
+      const n = Math.max(5, Math.round(VW / 9));
+      for (let i = 0; i < n; i++) {
+        const x = (i + 0.5) * VW / n - VW / 2;
+        let y0 = -VH / 2; while (y0 < VH / 2 && pondR(x, y0, zi) > 0.9) y0++;
+        const len = 3 + hash(i, 7) * 5;
+        g.fillStyle = '#6b5f86';
+        g.beginPath(); g.moveTo(x - 1.6, y0 - 2); g.lineTo(x + 1.6, y0 - 2); g.lineTo(x, y0 + len); g.closePath(); g.fill();
+      }
+      [[0.15, 0.6], [0.86, 0.5], [0.25, 0.2], [0.76, 0.82], [0.38, 0.9], [0.72, 0.16], [0.5, 0.5], [0.1, 0.85]].forEach(([fx, fy], i) => {
+        const x = (fx - 0.5) * VW, y = (fy - 0.5) * VH, a = 0.55 + 0.45 * Math.sin(t * 1.4 + i * 1.7);
+        glow(x, y, 9, 'rgba(123,255,207,A)', 0.4 * a);
+        g.fillStyle = '#3d8f78'; g.fillRect(x - 0.4, y, 0.8, 2.6);
+        g.fillStyle = `rgba(160,255,225,${0.7 + 0.3 * a})`; g.beginPath(); g.ellipse(x, y, 2, 1.2, 0, Math.PI, 0); g.fill();
       });
-      [[9, 17], [47, 12], [15, 6], [41, 25], [22, 26], [38, 5]].forEach(([x, y], i) => {
-        const a = 0.5 + 0.5 * Math.sin(t * 1.4 + i * 1.7);
-        put(x - 1, y, '(', '#7bffcf', 0.4 + 0.4 * a); put(x, y, '*', '#7bffcf', 0.6 + 0.4 * a); put(x + 1, y, ')', '#7bffcf', 0.4 + 0.4 * a);
-        put(x, y + 1, '|', '#4aa88a', 0.7);
-        put(x - 2, y - 1, '.', '#7bffcf', 0.3 * a); put(x + 2, y - 1, '.', '#7bffcf', 0.3 * a);
-      });
+      vignette(0.6);
     },
     luna() {
-      for (let dy = -3; dy <= 3; dy++) {
-        const w = Math.round(Math.sin(t * 2 + dy) * 0.6);
-        for (let dx = -8; dx <= 8; dx++) {
-          if ((dx / 2.2) ** 2 + dy * dy <= 9) {
-            const edge = (dx / 2.2) ** 2 + dy * dy > 6;
-            put(CX + dx + w, 11 + dy, edge ? 'o' : 'O', '#fff3b0', edge ? 0.55 : 0.9);
-          }
-        }
+      const R = 10, my = -RY * 0.3;
+      glow(0, my, R * 2.6, 'rgba(255,243,176,A)', 0.2);
+      for (let k = -R; k <= R; k++) {
+        const w = Math.sqrt(R * R - k * k), off = Math.sin(t * 2 + k * 0.8) * 0.9;
+        g.fillStyle = `rgba(255,243,176,${0.9 - Math.abs(k) / R * 0.25})`;
+        g.fillRect(-w + off, my + k, w * 2, 1);
       }
-      for (let k = 0; k < 7; k++) {
-        const wid = 7 - k;
-        for (let dx = -wid; dx <= wid; dx++) if (hash(dx, k + Math.floor(t * 2)) > 0.55) put(CX + dx, 16 + k, '-', '#fff3b0', 0.45);
+      for (let k = 0; k < R + 1; k++) {
+        const w = R + 1 - k;
+        for (let dx = -w; dx <= w; dx += 2) if (hash(dx, k + Math.floor(t * 2)) > 0.5) { g.fillStyle = 'rgba(255,243,176,0.45)'; g.fillRect(dx, my + R + 2 + k * 1.2, 1.6, 0.8); }
       }
-      for (let i = 0; i < 14; i++) put(hash(i, 2) * COLS, hash(i, 8) * ROWS, '*', '#ffffff', 0.15 + 0.6 * Math.abs(Math.sin(t * 1.2 + i * 2.3)));
-      drawFireflies(5, '#b8c0ff');
+      for (let i = 0; i < 16; i++) { g.fillStyle = `rgba(255,255,255,${0.15 + 0.6 * Math.abs(Math.sin(t * 1.2 + i * 2.3))})`; g.fillRect((hash(i, 2) - 0.5) * VW, (hash(i, 8) - 0.5) * VH, 1, 1); }
+      fireflies(5, '184,192,255');
+      vignette(0.5);
     },
     templo() {
-      [[14, 8], [42, 8], [14, 19], [42, 19]].forEach(([x, y]) => {
-        put(x - 1, y, '=', '#cdbb84', 0.65); put(x, y, '=', '#cdbb84', 0.65); put(x + 1, y, '=', '#cdbb84', 0.65);
-        for (let k = 1; k < 6; k++) { put(x - 1, y + k, '|', '#a89860', 0.55); put(x + 1, y + k, '|', '#a89860', 0.55); }
-        put(x - 1, y + 6, '=', '#cdbb84', 0.65); put(x, y + 6, '=', '#cdbb84', 0.65); put(x + 1, y + 6, '=', '#cdbb84', 0.65);
+      const dx = 17, dy = 14, Rr = 14;
+      glow(0, 0, Rr * 1.6, 'rgba(46,196,182,A)', 0.14 + 0.08 * Math.sin(t * 1.6));
+      [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
+        const x = sx * dx, y = sy * dy - 6;
+        g.fillStyle = 'rgba(205,187,132,0.55)';
+        g.fillRect(x - 2.2, y - 1, 4.4, 1.4); g.fillRect(x - 1.5, y, 3, 12); g.fillRect(x - 2.2, y + 12, 4.4, 1.4);
+        g.fillStyle = 'rgba(255,240,180,0.25)'; g.fillRect(x - 0.6, y, 0.8, 12);
       });
       for (let i = 0; i < 8; i++) {
         const a = t * 0.5 + i * Math.PI / 4;
-        put(CX + Math.cos(a) * 8, CY + Math.sin(a) * 4, '+', '#2ec4b6', 0.4 + 0.6 * Math.abs(Math.sin(t * 1.3 + i)));
+        glow(Math.cos(a) * Rr, Math.sin(a) * Rr, 4, 'rgba(46,196,182,A)', 0.4 + 0.5 * Math.abs(Math.sin(t * 1.3 + i)));
       }
-      put(CX, CY, '+', '#7bdcb5', 0.5 + 0.5 * Math.sin(t * 2));
+      g.strokeStyle = `rgba(123,220,181,${0.3 + 0.3 * Math.sin(t * 2)})`; g.lineWidth = 0.8;
+      g.beginPath(); g.arc(0, 0, Rr, 0, 7); g.stroke();
+      vignette(0.4);
     },
   };
 
   // ───────────────────────── dibujo de carpas ─────────────────────────
+  function bodyColors(sp) {
+    return sp.rainbow ? [0, 1, 2, 3, 4, 5].map((k) => `hsl(${(t * 70 + k * 55) % 360},90%,62%)`) : sp.pat;
+  }
+
+  function smoothClosed(poly) {
+    const n = poly.length, mid = (a, b) => [(a.x + b.x) / 2, (a.y + b.y) / 2];
+    g.beginPath();
+    g.moveTo(...mid(poly[n - 1], poly[0]));
+    for (let i = 0; i < n; i++) g.quadraticCurveTo(poly[i].x, poly[i].y, ...mid(poly[i], poly[(i + 1) % n]));
+    g.closePath();
+  }
+
   function drawCarp(c) {
-    const sp = SPECIES[c.sp], rar = sp.r, stage = stageOf(c.xp);
-    const frame = Math.floor(t * (c.speed > 4 ? 9 : 4));
-    const base = baseSprite(stage, frame), L = base.length;
-    let alpha = c.hunger < 25 ? 0.5 : 1;
-    if (rar >= 2) alpha *= 0.85 + 0.15 * Math.sin(t * 3 + c.x);
+    const sp = SPECIES[c.sp], rar = sp.r, st = stageOf(c.xp), L = lenOf(st), Wm = L * 0.2;
+    const cols = bodyColors(sp);
+    const sp_ = c.spine, spd = clamp(c.speed / 8, 0, 1), amp = L * 0.1 * (0.45 + spd);
 
-    // estela
-    c.trail.forEach((p, i) => put(p.x, p.y, '.', ZN().water, 0.5 * (1 - i / c.trail.length)));
+    // puntos de la columna con la ondulación aplicada
+    const P = sp_.map((p, i) => {
+      const a = sp_[Math.max(i - 1, 0)], b = sp_[Math.min(i + 1, M - 1)];
+      let tx = a.x - b.x, ty = a.y - b.y; const d = Math.hypot(tx, ty) || 1; tx /= d; ty /= d;
+      const s = i / (M - 1), nx = -ty, ny = tx;
+      const off = Math.sin(c.phase - i * 0.75) * amp * s ** 1.3;
+      let w;
+      if (s < 0.3) w = Wm * (0.38 + 0.62 * Math.sqrt(Math.max(0, 1 - ((0.3 - s) / 0.3) ** 2)));
+      else w = Wm * (0.07 + 0.93 * (1 - (s - 0.3) / 0.7) ** 0.85);
+      return { x: p.x + nx * off, y: p.y + ny * off, tx, ty, nx, ny, w };
+    });
 
-    const left = Math.round(c.x - L / 2);
-    for (let i = 0; i < L; i++) {
-      const u = c.face === 1 ? i : L - 1 - i;
-      const raw = base[u];
-      const ch = c.face === 1 ? raw : (MIRROR[raw] || raw);
-      let col = sp.pat[u % sp.pat.length];
-      if (sp.head && raw === 'º') col = sp.head;
-      if (sp.rainbow) col = `hsl(${(t * 70 + u * 28) % 360},90%,68%)`;
-      put(left + i, c.y, ch, col, alpha);
+    const alpha = (c.hunger < 25 ? 0.6 : 1) * (rar >= 4 ? 0.88 + 0.12 * Math.sin(t * 3) : 1);
+
+    // aura de rareza
+    if (rar >= 2) glow(P[2].x, P[2].y, L * (0.7 + rar * 0.12), `rgba(${hex(RARITY[rar].c).join(',')},A)`, (0.12 + rar * 0.05) * (0.8 + 0.2 * Math.sin(t * 2 + c.x)));
+
+    const outline = (ox, oy) => {
+      const left = P.map((p) => ({ x: p.x + p.nx * p.w + ox, y: p.y + p.ny * p.w + oy }));
+      const right = P.map((p) => ({ x: p.x - p.nx * p.w + ox, y: p.y - p.ny * p.w + oy })).reverse();
+      const head = { x: P[0].x + P[0].tx * P[0].w * 0.9 + ox, y: P[0].y + P[0].ty * P[0].w * 0.9 + oy };
+      smoothClosed([head, ...left, ...right]);
+    };
+
+    g.save();
+    // sombra sobre el fondo
+    g.fillStyle = 'rgba(0,0,0,0.28)'; outline(1.2, 1.6); g.fill();
+
+    g.globalAlpha = alpha;
+    const E = P[M - 1], D = { x: -E.tx, y: -E.ty }, Lt = L * 0.4, sw = Math.sin(c.phase - M * 0.75 - 0.4) * Lt * 0.45;
+    const fin = cols[cols.length - 1];
+
+    // cola
+    g.fillStyle = fin; g.globalAlpha = alpha * 0.72;
+    g.beginPath(); g.moveTo(E.x, E.y);
+    g.quadraticCurveTo(E.x + D.x * Lt * 0.6 + E.nx * Lt * 0.75, E.y + D.y * Lt * 0.6 + E.ny * Lt * 0.75,
+      E.x + D.x * Lt + E.nx * (Lt * 0.55 + sw), E.y + D.y * Lt + E.ny * (Lt * 0.55 + sw));
+    g.quadraticCurveTo(E.x + D.x * Lt * 0.62 + E.nx * sw, E.y + D.y * Lt * 0.62 + E.ny * sw,
+      E.x + D.x * Lt - E.nx * (Lt * 0.55 - sw), E.y + D.y * Lt - E.ny * (Lt * 0.55 - sw));
+    g.quadraticCurveTo(E.x + D.x * Lt * 0.6 - E.nx * Lt * 0.75, E.y + D.y * Lt * 0.6 - E.ny * Lt * 0.75, E.x, E.y);
+    g.closePath(); g.fill();
+
+    // aletas pectorales
+    const pf = P[2], fsw = Math.sin(c.phase + 1) * 0.5;
+    [1, -1].forEach((side) => {
+      g.beginPath();
+      g.moveTo(pf.x + pf.nx * pf.w * side * 0.7, pf.y + pf.ny * pf.w * side * 0.7);
+      g.quadraticCurveTo(pf.x + pf.nx * side * (pf.w + L * 0.2), pf.y + pf.ny * side * (pf.w + L * 0.2),
+        pf.x + pf.nx * side * (pf.w + L * (0.22 + fsw * 0.1)) - pf.tx * L * 0.25, pf.y + pf.ny * side * (pf.w + L * (0.22 + fsw * 0.1)) - pf.ty * L * 0.25);
+      g.lineTo(pf.x - pf.tx * L * 0.06, pf.y - pf.ty * L * 0.06);
+      g.closePath(); g.fill();
+    });
+
+    // cuerpo + manchas
+    g.globalAlpha = alpha;
+    g.fillStyle = cols[0]; outline(0, 0); g.fill();
+    g.save(); outline(0, 0); g.clip();
+    for (let j = 0; j < M * 2 - 1; j++) {
+      const i = j / 2, a = P[Math.floor(i)], b = P[Math.min(Math.ceil(i), M - 1)];
+      g.fillStyle = cols[(j + 1) % cols.length];
+      g.beginPath(); g.arc((a.x + b.x) / 2 + (hash(j, 3) - 0.5) * Wm * 0.5, (a.y + b.y) / 2 + (hash(j, 4) - 0.5) * Wm * 0.5, Wm * (0.8 + hash(j, 5) * 0.5), 0, 7); g.fill();
     }
-    if (rar >= 3 && Math.random() < 0.08) put(c.x + rnd(-L, L), c.y + rnd(-1.3, 1.3), '*', RARITY[rar].c, 0.9);
-    if (c === selected) put(c.x, c.y - 1.2, 'v', '#ffffff', 0.9);
-    if (c.hunger < 15 && Math.floor(t * 1.5) % 2 === 0) put(c.x + c.face * (L / 2 + 1), c.y - 1, '?', '#ffb703', 0.9);
+    if (sp.head) { g.fillStyle = sp.head; g.beginPath(); g.arc(P[1].x, P[1].y, Wm * 0.75, 0, 7); g.fill(); }
+    // lomo con brillo
+    g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = Wm * 0.7; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(P[1].x, P[1].y); for (let i = 2; i < M - 1; i++) g.lineTo(P[i].x, P[i].y); g.stroke();
+    g.restore();
+
+    // ojos
+    g.fillStyle = 'rgba(0,0,0,0.85)';
+    [1, -1].forEach((side) => { g.beginPath(); g.arc(P[0].x + P[0].nx * P[0].w * 0.75 * side - P[0].tx * 0.2, P[0].y + P[0].ny * P[0].w * 0.75 * side - P[0].ty * 0.2, 0.55, 0, 7); g.fill(); });
+    g.restore();
+
+    if (rar >= 3 && Math.random() < 0.25) { g.fillStyle = '#fff'; g.fillRect(c.x + rnd(-L / 2, L / 2), c.y + rnd(-L / 2, L / 2), 1, 1); }
+    if (c.hunger < 15 && Math.floor(t * 1.5) % 2 === 0) { g.fillStyle = '#ffb703'; g.fillRect(c.x - 0.5, c.y - L * 0.45, 1, 2); g.fillRect(c.x - 0.5, c.y - L * 0.45 + 2.8, 1, 1); }
+    if (c === selected) { g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 0.7; g.setLineDash([1.5, 1.5]); g.lineDashOffset = -t * 4; g.beginPath(); g.arc(P[2].x, P[2].y, L * 0.75, 0, 7); g.stroke(); g.setLineDash([]); }
   }
 
   // ───────────────────────── lógica ─────────────────────────
   function updateMovement(c, dt) {
-    const stage = stageOf(c.xp);
-    // objetivo: la comida más cercana si tiene hambre; si no, vagar
+    const zi = c.zi, stage = stageOf(c.xp), food = pellets[zi];
     let target = null;
-    if (c.hunger < 90 && pellets.length) {
+    if (c.hunger < 90 && food.length) {
       let best = 1e9;
-      pellets.forEach((p) => { const d = Math.hypot(p.x - c.x, (p.y - c.y) * 2); if (d < best) { best = d; target = p; } });
+      food.forEach((p) => { const d = Math.hypot(p.x - c.x, p.y - c.y); if (d < best) { best = d; target = p; } });
     }
     c.chasing = !!target;
     if (target) { c.tx = target.x; c.ty = target.y; }
     else {
       c.retarget -= dt;
-      if (c.retarget <= 0 || Math.hypot(c.tx - c.x, (c.ty - c.y) * 2) < 2) { [c.tx, c.ty] = randomWaterPoint(); c.retarget = rnd(3, 7); }
+      if (c.retarget <= 0 || Math.hypot(c.tx - c.x, c.ty - c.y) < 3) { [c.tx, c.ty] = randomWaterPoint(zi); c.retarget = rnd(3, 7); }
     }
-    const want = Math.atan2((c.ty - c.y) * 2, c.tx - c.x);
+    const want = Math.atan2(c.ty - c.y, c.tx - c.x);
     let diff = want - c.ang; while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
-    c.ang += clamp(diff, -2.2 * dt, 2.2 * dt);
-    c.speed = (2.2 + stage * 0.35) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 2 : 1);
-    const nx = c.x + Math.cos(c.ang) * c.speed * dt, ny = c.y + Math.sin(c.ang) * c.speed * dt * 0.5;
-    if (inWater(nx, ny, 0.84)) { c.x = nx; c.y = ny; } else { c.ang += Math.PI * 0.6; [c.tx, c.ty] = randomWaterPoint(); }
-    const cs = Math.cos(c.ang);
-    if (Math.abs(cs) > 0.25) c.face = cs >= 0 ? 1 : -1;
+    const turn = (2.6 - stage * 0.25) * dt;
+    c.ang += clamp(diff, -turn, turn);
+    c.speed = (4.2 + stage * 0.5) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 1.9 : 1);
+    const nx = c.x + Math.cos(c.ang) * c.speed * dt, ny = c.y + Math.sin(c.ang) * c.speed * dt;
+    if (inWater(nx, ny, 0.82, zi)) { c.x = nx; c.y = ny; } else { c.ang += Math.PI * 0.6; [c.tx, c.ty] = randomWaterPoint(zi); }
+    c.phase += dt * (3.5 + c.speed * 0.7);
 
-    c.trailT += dt;
-    if (c.trailT > 0.12) { c.trailT = 0; c.trail.unshift({ x: c.x - c.face * 3, y: c.y }); if (c.trail.length > 4) c.trail.pop(); }
+    // la columna sigue a la cabeza
+    const sl = lenOf(stage) / (M - 1);
+    c.spine[0].x = c.x; c.spine[0].y = c.y;
+    for (let i = 1; i < M; i++) {
+      const a = c.spine[i - 1], b = c.spine[i];
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1;
+      b.x = a.x + dx / d * sl; b.y = a.y + dy / d * sl;
+    }
 
     // comer
-    for (let i = pellets.length - 1; i >= 0; i--) {
-      const p = pellets[i];
-      if (c.hunger < 90 && Math.hypot(p.x - c.x, (p.y - c.y) * 2) < 1.8) {
-        pellets.splice(i, 1);
+    for (let i = food.length - 1; i >= 0; i--) {
+      const p = food[i];
+      if (c.hunger < 90 && Math.hypot(p.x - c.x, p.y - c.y) < 2.6) {
+        food.splice(i, 1);
         const before = stageOf(c.xp);
         c.hunger = Math.min(100, c.hunger + FEED); c.xp += 1;
-        ripple(p.x, p.y, true);
+        ripple(zi, p.x, p.y, true);
         if (stageOf(c.xp) > before) toast(`${SPECIES[c.sp].name} ha crecido`, RARITY[SPECIES[c.sp].r].c);
         break;
       }
     }
   }
 
-  function spawnPerla(zi, c, active) {
+  function spawnPerla(zi, c) {
     const z = S.zones[zi];
-    const v = perlaValue(c);
-    if (z.perlas.length >= 10) { S.perlas += z.perlas.shift().v; }
-    const x = active ? c.x : randomWaterPoint()[0], y = active ? c.y : randomWaterPoint()[1];
-    z.perlas.push({ x, y, v });
-    if (active) ripple(x, y, true);
+    if (z.perlas.length >= 10) S.perlas += z.perlas.shift().v;
+    z.perlas.push({ x: c.x, y: c.y, v: perlaValue(c) });
+    ripple(zi, c.x, c.y, true);
   }
 
   function hatch(e) {
@@ -320,24 +542,21 @@
     const total = zone.pool.reduce((a, id) => a + RARITY[SPECIES[id].r].w, 0);
     let roll = Math.random() * total, id = zone.pool[0];
     for (const k of zone.pool) { roll -= RARITY[SPECIES[k].r].w; if (roll <= 0) { id = k; break; } }
-    const [x, y] = randomWaterPoint();
-    const c = initCarp({ sp: id, hunger: 60, xp: 0, x, y });
+    const c = initCarp({ sp: id, hunger: 60, xp: 0 }, e.zone);
     S.zones[e.zone].carps.push(c);
     const isNew = !S.album[id];
     S.album[id] = (S.album[id] || 0) + 1;
     const sp = SPECIES[id];
     toast(`${isNew ? 'nueva · ' : ''}${sp.name} (${RARITY[sp.r].n})`, RARITY[sp.r].c, 3200);
-    if (e.zone === S.zone) ripple(x, y, false);
+    ripple(e.zone, c.x, c.y, false);
     refreshHud();
   }
 
-  let foodAcc = 0;
+  let hudAcc = 0;
   function update(dt) {
     t += dt;
-    // comida
     if (S.food < FOOD_MAX) { S.foodT += dt; while (S.foodT >= FOOD_EVERY && S.food < FOOD_MAX) { S.food++; S.foodT -= FOOD_EVERY; } } else S.foodT = 0;
 
-    // huevos
     const now = Date.now();
     for (let i = S.eggs.length - 1; i >= 0; i--) {
       const e = S.eggs[i];
@@ -345,73 +564,151 @@
     }
 
     S.zones.forEach((z, zi) => {
-      const active = zi === S.zone;
+      if (!S.unlocked[zi]) return;
       z.carps.forEach((c) => {
         c.hunger = Math.max(0, c.hunger - HUNGER_RATE * dt);
         if (c.hunger > 30) c.pt -= dt;
-        if (c.pt <= 0) { c.pt = rnd(12, 22); if (S.unlocked[zi]) spawnPerla(zi, c, active); }
-        if (active) updateMovement(c, dt);
+        if (c.pt <= 0) { c.pt = rnd(12, 22); spawnPerla(zi, c); }
+        updateMovement(c, dt);
       });
+      pellets[zi] = pellets[zi].filter((p) => t - p.born < 30);
     });
-
-    pellets = pellets.filter((p) => t - p.born < 30);
     ripples = ripples.filter((r) => t - r.born < r.max);
-    foodAcc += dt;
-    if (foodAcc > 0.5) { foodAcc = 0; refreshHud(); refreshInfo(); }
+
+    if (fly) {
+      const k = 1 - Math.exp(-dt * 5);
+      cam.x += (fly.x - cam.x) * k; cam.y += (fly.y - cam.y) * k; cam.z += (fly.z - cam.z) * k;
+      if (Math.abs(fly.x - cam.x) < 0.2 && Math.abs(fly.y - cam.y) < 0.2 && Math.abs(fly.z - cam.z) < 0.05) fly = null;
+      clampCam();
+    }
+
+    hudAcc += dt;
+    if (hudAcc > 0.5) { hudAcc = 0; refreshHud(); refreshInfo(); }
+  }
+
+  // ───────────────────────── tamaño y rejilla ─────────────────────────
+  const canvas = $('#pond'), ctx = canvas.getContext('2d');
+  const FONT = 'ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace';
+  const blooms = [2, 4, 8].map(() => document.createElement('canvas'));
+  const glyphs = new Map();
+  let cellDev = 8, dpr = 1, quality = 1, started = false;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    const cell = Math.max(MIN_CELL, Math.sqrt(W * H / MAX_CELLS)) * quality;
+    cellDev = Math.max(3, Math.round(cell * dpr));
+    cellCss = cellDev / dpr;
+    GW = Math.ceil(W / cellCss); GH = Math.ceil(H / cellCss);
+
+    canvas.width = GW * cellDev; canvas.height = GH * cellDev;
+    canvas.style.width = canvas.width / dpr + 'px'; canvas.style.height = canvas.height / dpr + 'px';
+    src.width = GW; src.height = GH;
+    img = g.createImageData(GW, GH);
+    sinX = new Float32Array(GW); sinY = new Float32Array(GH);
+    const N = GW * GH;
+    zIdx = new Int8Array(N); nzx = new Int8Array(N); nzy = new Int8Array(N);
+    rArr = new Float32Array(N); hArr = new Float32Array(N); h2Arr = new Float32Array(N); exArr = new Float32Array(N); eyArr = new Float32Array(N);
+    blooms.forEach((b, i) => { const d = [2, 4, 8][i]; b.width = Math.ceil(canvas.width / d); b.height = Math.ceil(canvas.height / d); });
+    glyphs.clear();
+
+    if (!started) {          // primera vez: la partida guardada o el estanque inicial
+      started = true;
+      if (S.cam) { cam.x = S.cam.x; cam.y = S.cam.y; cam.z = S.cam.z; } else { cam.x = 0; cam.y = 0; cam.z = defaultZoom(); }
+    }
+    clampCam();
+  }
+
+  // ───────────────────────── brillo → letra ─────────────────────────
+  const CH_HI = ['8', 'S', '9', 'X', '@', '5', '7', '1', 'd', '3'];
+  const CH_MID = ['x', '+', '=', '*', 'X', 'z'];
+  const CH_LO = [':', ';', '-', '~'];
+  const CH_VLO = ['.', ',', "'", '`'];
+  const CHARSET = [...CH_HI, ...CH_MID, ...CH_LO, ...CH_VLO];
+  const IDX = new Map(CHARSET.map((c, i) => [c, i]));
+  function pickIdx(lum, h) {
+    const v = lum / 255;
+    const set = v > 0.6 ? CH_HI : v > 0.4 ? CH_MID : v > 0.24 ? CH_LO : v > 0.12 ? CH_VLO : null;
+    return set ? IDX.get(set[Math.floor(h * set.length) % set.length]) : -1;
+  }
+
+  // cada combinación (letra, color aproximado) se dibuja una vez y se reutiliza
+  function glyph(ci, qr, qg, qb) {
+    const key = (ci << 12) | (qr << 8) | (qg << 4) | qb;
+    let c = glyphs.get(key);
+    if (!c) {
+      if (glyphs.size > 40000) glyphs.clear();
+      c = document.createElement('canvas'); c.width = c.height = cellDev;
+      const x = c.getContext('2d');
+      x.font = `${cellDev * 1.02}px ${FONT}`; x.textAlign = 'center'; x.textBaseline = 'middle';
+      const k = (q) => Math.min(255, (q * 16 + 8) * 1.4 + 30) | 0;
+      x.fillStyle = `rgb(${k(qr)},${k(qg)},${k(qb)})`;
+      x.fillText(CHARSET[ci], cellDev / 2, cellDev / 2 + cellDev * 0.06);
+      glyphs.set(key, c);
+    }
+    return c;
   }
 
   // ───────────────────────── pintado ─────────────────────────
-  const canvas = $('#pond'), ctx = canvas.getContext('2d');
-  let cw = 10, chh = 19, fs = 16;
-  const FONT = 'ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace';
+  function renderScene() {
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    paintGround();
+    const u = U();
+    g.setTransform(u, 0, 0, u, GW / 2 - cam.x * u, GH / 2 - cam.y * u);
+    const vw = W / cam.z, vh = H / cam.z, ripW = Math.max(0.8, 1.3 / u);
 
-  function resize() {
-    const dpr = window.devicePixelRatio || 1;
-    const availW = Math.min(760, window.innerWidth - 24);
-    const availH = window.innerHeight - 190;
-    ctx.font = `100px ${FONT}`;
-    const ratio = ctx.measureText('M').width / 100 || 0.6;
-    cw = Math.max(5, Math.min(availW / COLS, availH / (ROWS * ratio * 2 * 1.0)));
-    fs = cw / ratio; chh = fs * 1.15;
-    canvas.width = Math.round(COLS * cw * dpr); canvas.height = Math.round(ROWS * chh * dpr);
-    canvas.style.width = COLS * cw + 'px'; canvas.style.height = ROWS * chh + 'px';
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ZONES.forEach((zone, zi) => {
+      if (!S.unlocked[zi]) return;
+      const [ox, oy] = zoneCenter(zi);
+      if (Math.abs(ox - cam.x) > TW / 2 + vw / 2 || Math.abs(oy - cam.y) > TH / 2 + vh / 2) return;   // fuera de pantalla
+      g.save(); g.translate(ox, oy);
+      DECOR[zone.id](zi);
+
+      g.lineWidth = ripW;
+      ripples.forEach((r) => {
+        if (r.zi !== zi) return;
+        const age = t - r.born, fade = 1 - age / r.max;
+        g.strokeStyle = `rgba(225,243,255,${0.8 * fade})`;
+        g.beginPath(); g.arc(r.x, r.y, age * r.speed, 0, 7); g.stroke();
+      });
+      pellets[zi].forEach((p) => { g.fillStyle = '#f0c96b'; g.beginPath(); g.arc(p.x, p.y + Math.sin(t * 3 + p.x) * 0.25, 0.85, 0, 7); g.fill(); });
+      S.zones[zi].perlas.forEach((p, i) => {
+        const k = 0.5 + 0.5 * Math.sin(t * 3 + i);
+        glow(p.x, p.y, 4.5, 'rgba(255,241,168,A)', 0.55);
+        g.fillStyle = '#fffbe0'; g.beginPath(); g.arc(p.x, p.y, 1.2 + k * 0.4, 0, 7); g.fill();
+      });
+      [...S.zones[zi].carps].sort((a, b) => a.y - b.y).forEach(drawCarp);
+      g.restore();
+    });
   }
 
-  function render() {
-    const zone = ZN();
-    clearBuf();
-    drawBase(zone);
-    DECOR[zone.id]();
-
-    // ondas
-    ripples.forEach((r) => {
-      const age = t - r.born, rad = age * r.speed, fade = 1 - age / r.max;
-      for (let y = Math.floor(r.y - rad / 2 - 2); y <= r.y + rad / 2 + 2; y++) {
-        for (let x = Math.floor(r.x - rad - 2); x <= r.x + rad + 2; x++) {
-          if (Math.abs(Math.hypot(x - r.x, (y - r.y) * 2) - rad) < 0.8) put(x, y, rad < 2.5 ? '.' : 'o', '#d8f1ff', 0.7 * fade);
-        }
-      }
-    });
-
-    // comida, perlas, carpas
-    pellets.forEach((p) => put(p.x, p.y + Math.sin(t * 3 + p.x) * 0.2, Math.floor(t * 2 + p.x) % 2 ? ':' : '.', '#e8c46a', 1));
-    zoneNow().perlas.forEach((p, i) => put(p.x, p.y, Math.floor(t * 2.5 + i) % 2 ? 'O' : 'o', '#fff1a8', 1));
-    [...zoneNow().carps].sort((a, b) => a.y - b.y).forEach(drawCarp);
-
-    // volcado al canvas
-    ctx.fillStyle = zone.bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.font = `${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (let y = 0; y < ROWS; y++) {
-      for (let x = 0; x < COLS; x++) {
-        const i = y * COLS + x, ch = bufCh[i];
-        if (ch === ' ') continue;
-        ctx.globalAlpha = clamp(bufAl[i], 0, 1); ctx.fillStyle = bufCo[i];
-        ctx.fillText(ch, x * cw + cw / 2, y * chh + chh / 2);
+  function toAscii() {
+    const d = g.getImageData(0, 0, GW, GH).data;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+    // fondo de cada celda: la propia imagen, ampliada sin suavizar y oscurecida
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(src, 0, 0, GW, GH, 0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(0,0,0,0.58)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    for (let y = 0, n = 0; y < GH; y++) {
+      for (let x = 0; x < GW; x++, n++) {
+        const i = n * 4, r = d[i], gg = d[i + 1], b = d[i + 2];
+        const ci = pickIdx(0.299 * r + 0.587 * gg + 0.114 * b, hArr[n]);
+        if (ci >= 0) ctx.drawImage(glyph(ci, r >> 4, gg >> 4, b >> 4), x * cellDev, y * cellDev);
       }
     }
-    ctx.globalAlpha = 1;
   }
+
+  // resplandor: la imagen se reduce varias veces y se suma de nuevo agrandada
+  function bloom() {
+    let from = canvas;
+    blooms.forEach((b) => { const bc = b.getContext('2d'); bc.clearRect(0, 0, b.width, b.height); bc.drawImage(from, 0, 0, b.width, b.height); from = b; });
+    ctx.globalCompositeOperation = 'lighter'; ctx.imageSmoothingEnabled = true;
+    [[blooms[2], 0.45], [blooms[1], 0.3]].forEach(([b, a]) => { ctx.globalAlpha = a; ctx.drawImage(b, 0, 0, canvas.width, canvas.height); });
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function render() { renderScene(); toAscii(); bloom(); }
 
   // ───────────────────────── interacción ─────────────────────────
   const HINT = 'toca el agua para alimentar';
@@ -421,35 +718,87 @@
     clearTimeout(toast.k); toast.k = setTimeout(() => el.classList.remove('on'), ms);
   }
 
-  canvas.addEventListener('pointerdown', (ev) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = (ev.clientX - rect.left) / rect.width * COLS, y = (ev.clientY - rect.top) / rect.height * ROWS;
-    const z = zoneNow();
+  // toque (sin arrastrar) sobre el mundo
+  function tap(px, py) {
+    const [wx, wy] = screenToWorld(px, py), zi = zoneAt(wx, wy);
+    if (zi < 0) return;
+    if (!S.unlocked[zi]) { if (status(zi) === 1) show('map'); return; }
+    const [ox, oy] = zoneCenter(zi), x = wx - ox, y = wy - oy, z = S.zones[zi];
+    const reach = (r) => Math.max(r, 18 / cam.z);          // zona de toque mínima en píxeles
 
-    // 1) perla
     for (let i = 0; i < z.perlas.length; i++) {
       const p = z.perlas[i];
-      if (Math.abs(p.x - x) < 2.2 && Math.abs(p.y - y) < 1.8) {
-        z.perlas.splice(i, 1); S.perlas += p.v; ripple(p.x, p.y, true);
+      if (Math.hypot(p.x - x, p.y - y) < reach(4.2)) {
+        z.perlas.splice(i, 1); S.perlas += p.v; ripple(zi, p.x, p.y, true);
         toast(`+${p.v} perlas`, '#fff1a8', 900); refreshHud(); save(); return;
       }
     }
-    // 2) carpa
     let hit = null, best = 1e9;
     z.carps.forEach((c) => {
-      const L = baseSprite(stageOf(c.xp), 0).length;
-      if (Math.abs(c.x - x) <= L / 2 + 1 && Math.abs(c.y - y) <= 1.6) { const d = Math.abs(c.x - x) + Math.abs(c.y - y); if (d < best) { best = d; hit = c; } }
+      const L = lenOf(stageOf(c.xp));
+      c.spine.forEach((p) => { const d = Math.hypot(p.x - x, p.y - y); if (d < reach(L * 0.45 + 2) && d < best) { best = d; hit = c; } });
     });
     if (hit) { selected = hit; refreshInfo(); return; }
-    // 3) alimentar
     selected = null;
-    if (S.food <= 0) { toast('sin comida, espera un poco', '#ffb703', 1200); return; }
-    if (inWater(x, y, 0.92)) { S.food--; pellets.push({ x, y, born: t }); ripple(x, y, true); refreshHud(); refreshInfo(); }
+    if (S.food <= 0) { toast('sin comida, espera un poco', '#ffb703', 1200); refreshInfo(); return; }
+    if (inWater(x, y, 0.9, zi)) { S.food--; pellets[zi].push({ x, y, born: t }); ripple(zi, x, y, true); refreshHud(); }
+    refreshInfo();
+  }
+
+  // arrastrar = mover la cámara · dos dedos = zoom · rueda = zoom
+  const ptrs = new Map();
+  let moved = 0, pinchD = 0;
+  canvas.addEventListener('pointerdown', (e) => {
+    canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    fly = null;
+    if (ptrs.size === 1) moved = 0;
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinchD = Math.hypot(a.x - b.x, a.y - b.y); moved = 99; }
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (ptrs.size === 1) {
+      moved += Math.abs(dx) + Math.abs(dy);
+      if (moved > 8) { cam.x -= dx / cam.z; cam.y -= dy / cam.z; clampCam(); }
+    } else if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()], before = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      p.x = e.clientX; p.y = e.clientY;
+      const d = Math.hypot(a.x - b.x, a.y - b.y), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      if (pinchD > 0 && d > 0) zoomAt(mid.x, mid.y, d / pinchD);
+      cam.x -= (mid.x - before.x) / cam.z; cam.y -= (mid.y - before.y) / cam.z; clampCam();
+      pinchD = d; return;
+    }
+    p.x = e.clientX; p.y = e.clientY;
+  });
+  const endPtr = (e) => {
+    if (!ptrs.has(e.pointerId)) return;
+    const was = ptrs.size;
+    ptrs.delete(e.pointerId);
+    if (was === 1 && moved <= 8 && e.type === 'pointerup') tap(e.clientX, e.clientY);
+    pinchD = 0;
+  };
+  canvas.addEventListener('pointerup', endPtr);
+  canvas.addEventListener('pointercancel', endPtr);
+  canvas.addEventListener('wheel', (e) => { e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+
+  document.querySelectorAll('#zoom button').forEach((b) => b.addEventListener('click', () => zoomAt(W / 2, H / 2, b.dataset.z === 'in' ? 1.35 : 1 / 1.35)));
+  window.addEventListener('keydown', (e) => {
+    if (!panel.hidden) return;
+    const k = e.key, step = 14 / cam.z * 8;
+    if (k === '+' || k === '=') zoomAt(W / 2, H / 2, 1.2);
+    else if (k === '-' || k === '_') zoomAt(W / 2, H / 2, 1 / 1.2);
+    else if (k === 'ArrowLeft' || k === 'a') { cam.x -= step; fly = null; clampCam(); }
+    else if (k === 'ArrowRight' || k === 'd') { cam.x += step; fly = null; clampCam(); }
+    else if (k === 'ArrowUp' || k === 'w') { cam.y -= step; fly = null; clampCam(); }
+    else if (k === 'ArrowDown' || k === 's') { cam.y += step; fly = null; clampCam(); }
   });
 
   // ───────────────────────── HUD ─────────────────────────
   function refreshHud() {
-    $('#zoneName').textContent = ZN().name;
+    const zi = zoneAt(cam.x, cam.y);
+    $('#zoneName').textContent = zi >= 0 && S.unlocked[zi] ? ZONES[zi].name : '';
+    if (zi >= 0 && S.unlocked[zi]) document.documentElement.style.setProperty('--accent', ZONES[zi].water);
     $('#perlas').innerHTML = `perlas <b>${fmt(S.perlas)}</b>`;
     $('#food').innerHTML = `comida <b>${S.food}/${FOOD_MAX}</b>`;
   }
@@ -459,15 +808,6 @@
     const sp = SPECIES[c.sp], full = Math.round(c.hunger / 10);
     el.textContent = `${sp.name} · ${RARITY[sp.r].n} · [${'█'.repeat(full)}${'░'.repeat(10 - full)}]`;
     el.style.color = RARITY[sp.r].c;
-  }
-
-  function applyTheme() {
-    const z = ZN();
-    document.body.style.background = z.bg;
-    document.documentElement.style.setProperty('--bg', z.bg);
-    document.documentElement.style.setProperty('--accent', z.water);
-    const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = z.bg;
-    refreshHud();
   }
 
   // ───────────────────────── paneles ─────────────────────────
@@ -496,7 +836,7 @@
         const open = S.unlocked[i], visible = open || S.unlocked[i - 1];
         const art = visible ? ZONE_ART[i] : '???????\n???????\n???????';
         let action = '';
-        if (open) action = `<button data-go="${i}" ${i === S.zone ? 'disabled' : ''}>${i === S.zone ? 'aquí' : 'ir'}</button>`;
+        if (open) action = `<button data-go="${i}">ir</button>`;
         else if (visible) action = `<button data-buy="${i}" ${S.perlas < z.cost ? 'disabled' : ''}>${fmt(z.cost)} perlas</button>`;
         const n = S.zones[i].carps.length;
         return `<div class="row ${visible ? '' : 'locked'}"><pre>${art}</pre>
@@ -506,8 +846,8 @@
       const total = Object.keys(SPECIES).length, got = Object.keys(S.album).length;
       body.innerHTML = `<div class="zone-title">álbum <span>${got}/${total}</span></div>` + ZONES.map((z, i) => {
         if (!S.unlocked[i] && !S.unlocked[i - 1]) return '';
-        const g = z.pool.filter((id) => S.album[id]).length;
-        return `<div class="zone-title">${z.name} <span>${g}/${z.pool.length}</span></div><div class="grid">` +
+        const gt = z.pool.filter((id) => S.album[id]).length;
+        return `<div class="zone-title">${z.name} <span>${gt}/${z.pool.length}</span></div><div class="grid">` +
           z.pool.map((id) => {
             const sp = SPECIES[id], has = S.album[id];
             return has
@@ -516,13 +856,14 @@
           }).join('') + '</div>';
       }).join('');
     } else if (kind === 'egg') {
-      const z = ZN(), full = zoneNow().carps.length >= CAP;
       const pend = S.eggs.map((e) => `<div>${ZONES[e.zone].name} · ${Math.max(0, Math.ceil((e.ready - Date.now()) / 1000))}s</div>`).join('');
-      body.innerHTML = `<div class="egg-info">
-        <div class="big">  .--.  \n (    ) \n  '--'  </div>
-        <div class="sub">${z.name} · ${zoneNow().carps.length}/${CAP} carpas · incubación ${EGG_TIME(S.zone)}s</div>
-        <button data-egg ${S.perlas < z.egg || full ? 'disabled' : ''}>${full ? 'zona llena' : `comprar huevo · ${fmt(z.egg)} perlas`}</button>
-        <div class="egg-list">${pend}</div></div>`;
+      body.innerHTML = `<div class="zone-title">huevos</div>` + ZONES.map((z, i) => {
+        if (!S.unlocked[i]) return '';
+        const n = S.zones[i].carps.length, full = n >= CAP;
+        return `<div class="row"><pre>  .--.  \n (    ) \n  '--'  </pre>
+          <div><div class="nm">${z.name}</div><div class="sub">${n}/${CAP} carpas · ${EGG_TIME(i)}s</div></div>
+          <button data-egg="${i}" ${S.perlas < z.egg || full ? 'disabled' : ''}>${full ? 'llena' : fmt(z.egg) + ' perlas'}</button></div>`;
+      }).join('') + `<div class="egg-list">${pend}</div>`;
     }
   }
 
@@ -539,38 +880,46 @@
   body.addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.go != null) {
-      S.zone = +b.dataset.go; pellets = []; ripples = []; selected = null; applyTheme(); refreshInfo(); save(); hide();
+      flyToZone(+b.dataset.go); selected = null; refreshInfo(); hide();
     } else if (b.dataset.buy != null) {
       const i = +b.dataset.buy, z = ZONES[i];
       if (S.perlas >= z.cost && !S.unlocked[i]) {
         S.perlas -= z.cost; S.unlocked[i] = true;
-        // cada zona nueva empieza con su carpa más común
         const sp = z.pool.find((id) => SPECIES[id].r === 0) || z.pool[0];
-        S.zones[i].carps.push(initCarp({ sp, hunger: 70, xp: 0 })); S.album[sp] = (S.album[sp] || 0) + 1;
-        toast(`${z.name} desbloqueado`, ZONES[i].water, 2800); refreshHud(); save(); renderPanel('map');
+        S.zones[i].carps.push(initCarp({ sp, hunger: 70, xp: 0 }, i)); S.album[sp] = (S.album[sp] || 0) + 1;
+        toast(`${z.name} desbloqueado`, z.water, 2800); refreshHud(); save();
+        camDirty = true; hide(); flyToZone(i);        // el mapa crece y la cámara viaja a la zona nueva
       }
-    } else if (b.hasAttribute('data-egg')) {
-      const z = ZN();
-      if (S.perlas >= z.egg && zoneNow().carps.length < CAP) {
-        S.perlas -= z.egg; S.eggs.push({ zone: S.zone, ready: Date.now() + EGG_TIME(S.zone) * 1000 });
+    } else if (b.dataset.egg != null) {
+      const i = +b.dataset.egg, z = ZONES[i];
+      if (S.perlas >= z.egg && S.zones[i].carps.length < CAP) {
+        S.perlas -= z.egg; S.eggs.push({ zone: i, ready: Date.now() + EGG_TIME(i) * 1000 });
         refreshHud(); save(); renderPanel('egg');
       }
     }
   });
 
   // ───────────────────────── arranque ─────────────────────────
-  window.addEventListener('resize', resize);
+  let rzTimer = 0;
+  window.addEventListener('resize', () => { clearTimeout(rzTimer); rzTimer = setTimeout(resize, 120); });
   window.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
   setInterval(save, 10000);
 
-  resize(); applyTheme(); refreshInfo();
+  resize(); refreshHud(); refreshInfo();
 
-  let last = performance.now(), acc = 0;
+  // si el dispositivo va justo, la rejilla se hace un poco más gruesa sola
+  let last = performance.now(), acc = 0, ema = 15, slow = 0;
   function frame(now) {
     const dt = Math.min(0.1, (now - last) / 1000); last = now; acc += dt;
     update(dt);
-    if (acc >= 1 / 20) { acc = 0; render(); }
+    if (acc >= 1 / 20) {
+      acc = 0;
+      const t0 = performance.now();
+      render();
+      ema = ema * 0.9 + (performance.now() - t0) * 0.1;
+      if (ema > 38) { if (++slow > 40 && quality < 1.8) { quality *= 1.15; slow = 0; ema = 20; resize(); } } else slow = 0;
+    }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
