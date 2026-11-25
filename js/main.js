@@ -81,15 +81,33 @@
 
   // distancia normalizada al centro del estanque (1 = orilla), con la orilla irregular
   // y distinta en cada zona. Coordenadas locales: (0,0) es el centro del estanque.
+  // Islotes por zona (coordenadas locales). Se mantienen lejos de los ejes por donde pasan los canales.
+  const ISLANDS = [
+    [{ x: -10, y: 10, r: 5 }],
+    [{ x: 10, y: -9, r: 4.5 }, { x: -13, y: 10, r: 3 }],
+    [],
+    [{ x: 6, y: 12, r: 4.5 }],
+    [{ x: 0, y: -11, r: 4.5 }],
+    [],
+  ];
   function pondR(x, y, zi) {
-    const nx = x / RX, ny = y / RY;
-    const th = Math.atan2(ny, nx);
-    return Math.hypot(nx, ny) / (1 + 0.05 * Math.sin(3 * th + 1 + zi * 1.7) + 0.035 * Math.sin(5 * th + 2 + zi * 0.9));
+    const nx = x / RX, ny = y / RY, th = Math.atan2(ny, nx), p = zi * 1.7;
+    // contorno orgánico: varias ondulaciones a la vez dan bahías, penínsulas y orillas distintas en cada zona
+    const wob = 1 + 0.07 * Math.sin(2 * th + 1 + p) + 0.06 * Math.sin(3 * th + 2 + p * 0.7) + 0.04 * Math.sin(5 * th + p) + 0.025 * Math.sin(7 * th + 3 + p * 1.3);
+    let r = Math.hypot(nx, ny) / wob;
+    // cada islote: tierra dentro, orilla estrecha y un anillo de aguas poco profundas
+    for (const is of ISLANDS[zi]) {
+      const d = Math.hypot(x - is.x, y - is.y);
+      const ri = d <= is.r ? 1 + (is.r - d) * 0.2 : d <= is.r + 1.6 ? 1 - (d - is.r) * 0.07 / 1.6 : Math.max(0, 0.93 - (d - is.r - 1.6) * 0.6 / 4.4);
+      if (ri > r) r = ri;
+    }
+    return r;
   }
   const inWater = (x, y, lim, zi) => pondR(x, y, zi) < lim;       // local a una zona
   function edgePoint(a, lim, zi) {
     const dx = Math.cos(a), dy = Math.sin(a);
-    for (let d = 0; d < 60; d += 0.5) if (pondR(dx * d, dy * d, zi) >= lim) return [dx * d, dy * d];
+    // desde fuera hacia dentro: así un islote en el camino no se confunde con la orilla
+    for (let d = 60; d >= 0; d -= 0.5) if (pondR(dx * d, dy * d, zi) < lim) return [dx * (d + 0.5), dy * (d + 0.5)];
     return [0, 0];
   }
 
@@ -169,7 +187,7 @@
     const dir = toZ > fromZ ? 1 : -1;
     for (let u = fromZ; u !== toZ; u += dir) {
       const v = u + dir, [ux, uy] = zoneCenter(u), [vx, vy] = zoneCenter(v);
-      const dx = Math.sign(vx - ux), dy = Math.sign(vy - uy), e = (dx ? RX : RY) * 0.88;
+      const dx = Math.sign(vx - ux), dy = Math.sign(vy - uy), e = (dx ? RX : RY) * 0.45;   // puntos bien dentro de cada estanque, sobre el eje del canal
       pts.push({ x: ux + dx * e, y: uy + dy * e }, { x: vx - dx * e, y: vy - dy * e });
     }
     return pts;
@@ -316,7 +334,9 @@
               for (let c = 0; c < 3; c++) { tmpDeep[c] = za.deep[c] + (zb.deep[c] - za.deep[c]) * tt; tmpLight[c] = za.light[c] + (zb.light[c] - za.light[c]) * tt; }
               deep = tmpDeep; light = tmpLight;
             }
-            const s = smooth((r - 0.3) / 0.62);
+            // manchas de profundidad fijas en el mundo: aguas más hondas y más someras
+            const dn = 0.8 + 0.4 * (0.5 + 0.5 * Math.sin(xv * 0.083 + zi) * Math.sin(yv * 0.071 - zi * 1.3) + 0.25 * Math.sin((xv + yv) * 0.19 + zi));
+            const s = smooth((r - 0.3) / 0.62 * dn);
             R = deep[0] + (light[0] - deep[0]) * s; G = deep[1] + (light[1] - deep[1]) * s; B = deep[2] + (light[2] - deep[2]) * s;
             if (s2 === 2) {
               const c1 = Math.sin(xv * 0.42 + t * 0.8 + ay) * Math.sin(yv * 0.38 - t * 0.65 + sinX[x] * 2.1);
@@ -387,13 +407,85 @@
     g.fillStyle = gr; g.fillRect(-TW / 2, -TH / 2, TW, TH);
   }
 
+  // ── paisaje alrededor del estanque: árboles, arbustos, flores, rocas e islotes ──
+  const landCache = {};
+  function landOf(zi) {
+    if (landCache[zi]) return landCache[zi];
+    const L = { trees: [], bushes: [], rocks: [], flowers: [], shore: [] }, placed = [];
+    const h = (k, j) => hash(k * 1.7 + zi * 13.1, j + zi * 3.3);
+    const fits = (x, y, r) => {
+      if (Math.abs(x) > TW / 2 - r - 1 || Math.abs(y) > TH / 2 - r - 1) return false;
+      if (pondR(x, y, zi) < 1.2 + r / 22) return false;
+      if (Math.abs(y) < 12 && Math.abs(x) > RX * 0.6) return false;       // carriles de los canales
+      if (Math.abs(x) < 12 && Math.abs(y) > RY * 0.6) return false;
+      return placed.every((p) => Math.hypot(p.x - x, p.y - y) > p.r + r - 1.2);
+    };
+    const fill = (list, want, rmin, rmax, seed, spaced) => {
+      for (let k = 0; k < 900 && list.length < want; k++) {
+        const r = rmin + h(k + seed, 5) * (rmax - rmin), x = (h(k + seed, 1) - 0.5) * (TW - 4), y = (h(k + seed, 2) - 0.5) * (TH - 4);
+        if (!fits(x, y, spaced ? r : 0.2)) continue;
+        const o = { x, y, r, p: h(k + seed, 3) * 6, tone: h(k + seed, 4) };
+        list.push(o); if (spaced) placed.push(o);
+      }
+    };
+    fill(L.trees, 13, 3.6, 6, 0, true);
+    fill(L.bushes, 15, 1.5, 2.5, 100, true);
+    fill(L.rocks, 8, 1.1, 2.3, 200, true);
+    fill(L.flowers, 40, 0.5, 0.5, 300, false);
+    // rocas en las aguas someras de la orilla
+    for (let i = 0; i < 9; i++) { const [x, y] = edgePoint(h(i, 7) * Math.PI * 2, 0.9, zi); L.shore.push({ x, y, r: 0.9 + h(i, 8) * 1.1, tone: h(i, 9) }); }
+    return (landCache[zi] = L);
+  }
+  const treeColors = ZONES.map((z) => { const [r, gr, b] = hex(z.grass); const c = (m, a, d) => `rgb(${Math.min(255, r * m) | 0},${Math.min(255, gr * a) | 0},${Math.min(255, b * d) | 0})`; return [c(0.45, 0.75, 0.45), c(0.65, 1.1, 0.6), c(0.95, 1.5, 0.85)]; });
+
+  function tree(x, y, r, cols, sway) {
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(x + r * 0.28, y + r * 0.34, r, r * 0.92, 0, 0, 7); g.fill();
+    g.fillStyle = cols[0]; g.beginPath(); g.arc(x, y, r, 0, 7); g.fill();
+    g.fillStyle = cols[1]; g.beginPath(); g.arc(x - r * 0.12 + sway, y - r * 0.14, r * 0.78, 0, 7); g.fill();
+    g.fillStyle = cols[2]; g.beginPath(); g.arc(x - r * 0.28 + sway, y - r * 0.3, r * 0.4, 0, 7); g.fill();
+  }
+  function rock(x, y, r, tone, rgb) {
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(x + 0.7, y + 0.9, r, r * 0.85, 0, 0, 7); g.fill();
+    g.fillStyle = tone > 0.5 ? rgb[0] : rgb[1]; g.beginPath(); g.ellipse(x, y, r, r * 0.85, 0, 0, 7); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.18)'; g.beginPath(); g.ellipse(x - r * 0.25, y - r * 0.3, r * 0.5, r * 0.35, 0, 0, 7); g.fill();
+    if (tone > 0.72) { g.fillStyle = '#4f8f46'; g.beginPath(); g.ellipse(x + r * 0.2, y + r * 0.4, r * 0.5, r * 0.25, 0, 0, 7); g.fill(); }
+  }
+
+  function landscape(zi) {
+    const id = ZONES[zi].id, L = landOf(zi), cols = treeColors[zi];
+    const stone = id === 'cueva' ? ['#6a5f80', '#544a68'] : id === 'templo' ? ['#8d8466', '#736b51'] : ['#7a828c', '#626a74'];
+    L.shore.forEach((s) => rock(s.x, s.y, s.r, s.tone, stone));
+    L.rocks.forEach((o) => rock(o.x, o.y, o.r, o.tone, stone));
+    if (id !== 'cueva') {
+      const fl = ['#ffffff', '#ff8fb1', '#ffe66d', '#c9a0ff'];
+      L.flowers.forEach((o, i) => { g.fillStyle = fl[i % 4]; g.globalAlpha = 0.85; g.fillRect(o.x, o.y, 0.9, 0.9); g.globalAlpha = 1; });
+      L.bushes.forEach((o) => { const s = Math.sin(t * 1.1 + o.p) * 0.12; tree(o.x, o.y, o.r, cols, s); });
+    }
+    L.trees.forEach((o) => {
+      if (id === 'cueva') rock(o.x, o.y, o.r * 0.8, o.tone, stone);
+      else if (id === 'templo') {                                   // bloques de ruinas
+        g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(o.x - o.r * 0.7 + 0.9, o.y - o.r * 0.7 + 1.1, o.r * 1.4, o.r * 1.4);
+        g.fillStyle = o.tone > 0.5 ? '#8d8466' : '#736b51'; g.fillRect(o.x - o.r * 0.7, o.y - o.r * 0.7, o.r * 1.4, o.r * 1.4);
+        g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(o.x - o.r * 0.7, o.y - o.r * 0.7, o.r * 1.4, o.r * 0.3);
+      } else tree(o.x, o.y, o.r, cols, Math.sin(t * 0.8 + o.p) * 0.3);
+    });
+    // islotes
+    ISLANDS[zi].forEach((is, i) => {
+      if (id === 'cueva' || id === 'templo') { rock(is.x - 1, is.y, is.r * 0.55, 0.9, stone); rock(is.x + 1.6, is.y + 1, is.r * 0.4, 0.2, stone); }
+      else tree(is.x, is.y, is.r * 0.92, cols, Math.sin(t * 0.8 + i) * 0.3);
+    });
+  }
+
   const DECOR = {
     estanque(zi) {
-      const n = Math.round((VW + VH) / 8);
-      for (let i = 0; i < n; i++) {
-        const [x, y] = edgePoint(i * 2.399, 0.97, zi), sw = Math.sin(t * 1.5 + i) * 1.1;
-        g.strokeStyle = '#7ab955'; g.lineWidth = 0.9;
-        for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(x + k, y); g.quadraticCurveTo(x + k, y - 3, x + k + sw, y - 6 - Math.abs(k)); g.stroke(); }
+      // juncos en grupos, con espadañas
+      for (let cl = 0; cl < 6; cl++) {
+        const a = hash(cl, 11) * Math.PI * 2, [cx, cy] = edgePoint(a, 0.97, zi);
+        for (let i = 0; i < 6; i++) {
+          const x = cx + (hash(cl, i) - 0.5) * 5, y = cy + (hash(i, cl + 4) - 0.5) * 3, ht = 5 + hash(cl + i, 2) * 4, sw = Math.sin(t * 1.5 + cl + i) * 1.1;
+          g.strokeStyle = '#7ab955'; g.lineWidth = 0.8; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x, y - ht * 0.5, x + sw, y - ht); g.stroke();
+          if (i % 2 === 0) { g.fillStyle = '#6b4a2b'; g.fillRect(x + sw - 0.5, y - ht - 1.5, 1, 2.2); }       // espadaña
+        }
       }
       drawPads(padsOf(zi));
     },
@@ -704,6 +796,13 @@
     let diff = want - c.ang; while (diff > Math.PI) diff -= Math.PI * 2; while (diff < -Math.PI) diff += Math.PI * 2;
     const turn = (2.6 - stage * 0.25) * dt;
     c.ang += clamp(diff, -turn, turn);
+    // esquiva orillas e islotes con antelación en vez de chocar
+    const ahead = 5 + stage * 1.2;
+    if (!waterAt(c.x + Math.cos(c.ang) * ahead, c.y + Math.sin(c.ang) * ahead, 0.86)) {
+      const l = waterAt(c.x + Math.cos(c.ang - 0.8) * ahead, c.y + Math.sin(c.ang - 0.8) * ahead, 0.86);
+      const r = waterAt(c.x + Math.cos(c.ang + 0.8) * ahead, c.y + Math.sin(c.ang + 0.8) * ahead, 0.86);
+      c.ang += (l && !r ? -1 : r && !l ? 1 : c.avoid || (c.avoid = Math.random() < 0.5 ? -1 : 1)) * 3.4 * dt;
+    } else c.avoid = 0;
     c.speed = (4.2 + stage * 0.5) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 1.9 : 1);
     const nx = c.x + Math.cos(c.ang) * c.speed * dt, ny = c.y + Math.sin(c.ang) * c.speed * dt;
     if (waterAt(nx, ny, 0.82)) { c.x = nx; c.y = ny; }
@@ -868,7 +967,7 @@
       if (!S.unlocked[zi]) return;
       const [ox, oy] = zoneCenter(zi);
       if (!seen(ox, oy, TW / 2 + 4)) return;
-      g.save(); g.translate(ox, oy); DECOR[zone.id](zi); g.restore();
+      g.save(); g.translate(ox, oy); landscape(zi); DECOR[zone.id](zi); g.restore();
     });
     drawChannels();
 
