@@ -48,7 +48,56 @@ const DATA = (() => {
     ambar:      { name: 'Ámbar',             r: 2, pat: ['#ff9f1c', '#ffbf69'] },
     dragon:     { name: 'Carpa dragón',      r: 3, pat: ['#e63946', '#ffd23f', '#e63946', '#2ec4b6'] },
     celestial:  { name: 'Celestial',         r: 4, pat: ['#ffffff'], rainbow: true },
+    // Secretos: solo se consiguen al encontrar su rincón (no salen de huevos)
+    eco:        { name: 'Carpa eco',         r: 3, pat: ['#7b6cff', '#b8b0ff', '#3a2f8f'], secret: true },
+    rubi:       { name: 'Koi rubí',          r: 3, pat: ['#ff2e63', '#ffd6e0', '#b5103c'], secret: true },
+    // Portal: carpas de otros mundos (fx = efecto especial al dibujarlas)
+    ceniza:     { name: 'Carpa ceniza',      r: 2, pat: ['#5a5350', '#8a7f78', '#ff7a2f'] },
+    magma:      { name: 'Carpa de magma',    r: 4, pat: ['#ff4500', '#ffb000', '#7a1a05', '#ff6a00'], fx: 'magma' },
+    escarcha:   { name: 'Carpa escarcha',    r: 2, pat: ['#cfe9f5', '#9cc9e0', '#ffffff'] },
+    hielo:      { name: 'Carpa de hielo',    r: 4, pat: ['#e6f9ff', '#a8e4ff', '#ffffff'], fx: 'ice' },
+    nebulosa:   { name: 'Carpa nebulosa',    r: 2, pat: ['#7b5cd6', '#e07ad8', '#4a3a9a'] },
+    estelar:    { name: 'Carpa estelar',     r: 4, pat: ['#101c4f', '#1c2c72', '#0b1438'], fx: 'stars' },
+    estatica:   { name: 'Carpa estática',    r: 2, pat: ['#9a9a9a', '#d8d8d8', '#5a5a5a', '#ffffff'] },
+    glitch:     { name: 'Carpa glitch',      r: 4, pat: ['#00ff9c', '#ff00e6', '#00e5ff', '#111111'], fx: 'glitch' },
+    // Criaturas del laboratorio: solo salen de una fórmula (shape = cómo se dibujan, long = largo, spd = velocidad)
+    ryu:        { name: 'Dragón',            r: 4, pat: ['#d62839', '#ffd23f', '#d62839', '#ff7b00'], shape: 'dragon', long: 2.1, spd: 1.1, lab: true },
+    komodo:     { name: 'Komodo',            r: 4, pat: ['#6b7550', '#857f58', '#5b6446', '#9a9068'], shape: 'komodo', long: 1.25, spd: 0.7, lab: true },
   };
+
+  // Laboratorio: se construye una vez; mezcla dos carpas adultas. Ciertas parejas dan una criatura.
+  const LAB = { cost: 2000 };
+  const RECIPES = [
+    { sp: 'ryu', a: 'dragon', b: 'brasa', hint: 'una carpa de leyenda y otra que arde' },
+    { sp: 'komodo', a: 'piedra', b: 'musgo', hint: 'algo duro como la roca y algo verde' },
+  ];
+
+  // Rincones secretos del mapa (en map.js, después de las seis zonas). Se encuentran, no se compran.
+  const SECRETS = [
+    { id: 'gruta', name: 'Gruta escondida', water: '#46407a', shore: '#4a4058', grass: '#3b3358', species: 'eco', reward: 600 },
+    { id: 'poza', name: 'Poza secreta', water: '#784a6e', shore: '#6b5b45', grass: '#4a6b3a', species: 'rubi', reward: 300 },
+  ];
+
+  // Mejoras que se compran con perlas: tres niveles cada una
+  const UPGRADES = [
+    { id: 'feeder', name: 'Comedero automático', cost: [150, 900, 4000], desc: ['echa una bolita cada 25 s', 'cada 16 s', 'cada 10 s'] },
+    { id: 'net', name: 'Red de perlas', cost: [200, 1200, 5000], desc: ['recoge las perlas cada 30 s', 'cada 18 s', 'cada 10 s'] },
+    { id: 'incub', name: 'Incubadora', cost: [120, 700, 3500], desc: ['huevos un 30 % más rápidos', 'un 50 %', 'un 70 %'] },
+    { id: 'cap', name: 'Estanque más hondo', cost: [300, 1500, 6000], desc: ['+3 carpas de cupo', '+6', '+9'] },
+    { id: 'bag', name: 'Saco de comida', cost: [100, 600, 3000], desc: ['16 bolitas y salen antes', '20', '24'] },
+  ];
+
+  // Encargos del día: cada día salen tres de esta lista
+  const QUESTS = [
+    { id: 'feed', text: 'Alimenta a tus carpas', n: 15 },
+    { id: 'pearls', text: 'Recoge perlas', n: 60 },
+    { id: 'hatch', text: 'Abre huevos', n: 2 },
+    { id: 'grow', text: 'Haz crecer una carpa', n: 1 },
+    { id: 'fortune', text: 'Atrapa la carpa de la fortuna', n: 1 },
+    { id: 'heron', text: 'Espanta a la garza', n: 1 },
+    { id: 'lure', text: 'Guía a tus carpas con el dedo', n: 1 },
+    { id: 'breed', text: 'Mezcla dos carpas en el laboratorio', n: 1 },
+  ];
 
   // cost = perlas para desbloquear · egg = precio del huevo · pool = especies que pueden salir
   const ZONES = [
@@ -58,13 +107,24 @@ const DATA = (() => {
       pool: ['musgo', 'asagi', 'sanke', 'shusui', 'kujaku'] },
     { id: 'cascada',   name: 'Cascada',           cost: 500,   egg: 300,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
       pool: ['plateada', 'benigoi', 'showa', 'platinum', 'tancho'] },
-    { id: 'cueva',     name: 'Cueva',             cost: 1500,  egg: 800,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#6a4a8a',
+    { id: 'cueva',     name: 'Cueva',             cost: 1500,  egg: 800,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
       pool: ['ciega', 'cristal', 'brasa', 'fantasma', 'abisal'] },
     { id: 'luna',      name: 'Lago de la Luna',   cost: 4000,  egg: 2000, bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
       pool: ['rocio', 'lunar', 'kumonryu', 'medianoche', 'lunallena'] },
     { id: 'templo',    name: 'Templo sumergido',  cost: 10000, egg: 5000, bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
       pool: ['piedra', 'jade', 'ambar', 'dragon', 'celestial'] },
+    { id: 'portal',    name: 'Portal',            cost: 25000, egg: 8000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
+      pool: ['ceniza', 'magma', 'escarcha', 'hielo', 'nebulosa', 'estelar', 'estatica', 'glitch'] },
   ];
 
-  return { RARITY, SPECIES, ZONES };
+  // El portal conecta cada día con un mundo distinto, y solo trae las carpas de ese mundo.
+  // Se abre la primera media hora de cada hora par (las 0:00, las 2:00, las 4:00...).
+  const WORLDS = [
+    { id: 'lava', name: 'Mundo de lava', color: '#ff6a2b', pool: ['ceniza', 'magma'] },
+    { id: 'hielo', name: 'Mundo helado', color: '#9fe8ff', pool: ['escarcha', 'hielo'] },
+    { id: 'estrellas', name: 'Mundo de las estrellas', color: '#b8a4ff', pool: ['nebulosa', 'estelar'] },
+    { id: 'roto', name: 'Mundo roto', color: '#00ff9c', pool: ['estatica', 'glitch'] },
+  ];
+
+  return { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS };
 })();

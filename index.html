@@ -22,14 +22,18 @@
     <div id="zoom">
       <button data-z="in" aria-label="Acercar">+</button>
       <button data-z="out" aria-label="Alejar">−</button>
+      <button data-z="snd" aria-label="Silenciar"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10v4h4l5 4V6L8 10H4z"/><path class="wave" d="M16 9a4 4 0 0 1 0 6"/><path class="wave" d="M18.5 6.5a8 8 0 0 1 0 11"/><path class="mute" d="M16 9l5 6M21 9l-5 6"/></svg></button>
     </div>
 
+    <button id="collect" hidden></button>
     <p id="info"></p>
 
     <nav id="nav">
       <button data-p="map">mapa</button>
       <button data-p="album">álbum</button>
-      <button data-p="egg">huevo</button>
+      <button data-p="egg">huevos</button>
+      <button data-p="upgrades">mejoras</button>
+      <button data-p="quests">encargos</button>
     </nav>
   </main>
 
@@ -41,6 +45,9 @@
   </section>
 
   <script src="js/data.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/ascii-gl.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
