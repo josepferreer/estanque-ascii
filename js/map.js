@@ -19,16 +19,17 @@ const MAP = (() => {
   const PW = 11;                                     // medio ancho de los pasadizos secretos
 
   const DEF = [
-    { id: 'estanque', p: [340, 240], rx: 125, ry: 95, s: 1 },
-    { id: 'nenufares', p: [150, 295], rx: 125, ry: 95, s: 2 },
-    { id: 'cascada', p: [330, 90], rx: 125, ry: 72, s: 3 },
-    { id: 'cueva', p: [540, 185], rx: 112, ry: 92, s: 4 },
-    { id: 'luna', p: [478, 340], rx: 135, ry: 84, s: 5 },
-    { id: 'templo', p: [130, 105], rx: 108, ry: 80, s: 6 },
-    { id: 'portal', p: [292, 380], rx: 124, ry: 80, s: 9 },          // la última: un portal a otros mundos
+    // el lago de partida: el más grande (26/11, ×1,8); las demás zonas se apartaron para dejarle sitio
+    { id: 'estanque', p: [340, 240], rx: 225, ry: 171, s: 1 },
+    { id: 'nenufares', p: [114, 305], rx: 125, ry: 95, s: 2 },
+    { id: 'cascada', p: [329, 74], rx: 125, ry: 72, s: 3 },
+    { id: 'cueva', p: [576, 175], rx: 112, ry: 92, s: 4 },
+    { id: 'luna', p: [502, 357], rx: 135, ry: 84, s: 5 },
+    { id: 'templo', p: [104, 88], rx: 108, ry: 80, s: 6 },
+    { id: 'portal', p: [286, 397], rx: 124, ry: 80, s: 9 },          // la última: un portal a otros mundos
     // secretos: cuelgan de una zona (parent) y se llega por un pasadizo
-    { id: 'gruta', name: 'Gruta escondida', p: [632, 52], rx: 34, ry: 26, s: 7, parent: 3, path: [[585, 150], [612, 118], [598, 92], [624, 70]] },
-    { id: 'poza', name: 'Poza secreta', p: [58, 420], rx: 32, ry: 24, s: 8, parent: 1, path: [[95, 360], [72, 380], [86, 398], [64, 412]] },
+    { id: 'gruta', name: 'Gruta escondida', p: [668, 42], rx: 34, ry: 26, s: 7, parent: 3, path: [[621, 140], [648, 108], [634, 82], [660, 60]] },
+    { id: 'poza', name: 'Poza secreta', p: [22, 430], rx: 32, ry: 24, s: 8, parent: 1, path: [[59, 370], [36, 390], [50, 408], [28, 422]] },
   ];
   const MAIN = 7;
 
@@ -43,24 +44,25 @@ const MAP = (() => {
   const N = Z.length;
 
   // islotes (coordenadas de mundo): tierra dentro, orilla estrecha y un anillo de aguas someras
+  const SHALLOW = 16;                               // hasta dónde llegan las aguas someras de un islote, desde su borde
   const ISLANDS = [
-    [{ x: -38, y: 18, r: 26, lab: true }],         // el islote del laboratorio: grande, para que la casa quepa a escala de las carpas
-    [{ x: -182, y: 66, r: 8, turtle: true }, { x: -118, y: 18, r: 5 }],
+    [{ x: -60, y: 28, r: 26, lab: true }],         // el islote del laboratorio: grande, para que la casa quepa a escala de las carpas
+    [{ x: -210.8, y: 74, r: 8, turtle: true }, { x: -146.8, y: 26, r: 5 }],
     // cascada: dos peñascos en la poza donde cae el agua
-    [{ x: -20, y: -155, r: 2.6, boulder: true }, { x: 6, y: -153, r: 2.2, boulder: true }],
+    [{ x: -20.8, y: -167.8, r: 2.6, boulder: true }, { x: 5.2, y: -165.8, r: 2.2, boulder: true }],
     // cueva: estalagmitas que salen del agua
-    [{ x: 168, y: -28, r: 5, stal: true }, { x: 150, y: -64, r: 2.6, stal: true }, { x: 196, y: -24, r: 2.2, stal: true }, { x: 128, y: -28, r: 2, stal: true }],
-    [{ x: 160, y: 122, r: 6 }],
+    [{ x: 196.8, y: -36, r: 5, stal: true }, { x: 178.8, y: -72, r: 2.6, stal: true }, { x: 224.8, y: -32, r: 2.2, stal: true }, { x: 156.8, y: -36, r: 2, stal: true }],
+    [{ x: 179.2, y: 135.6, r: 6 }],
     // templo: la pirámide escalonada en el centro y un anillo de columnas en el agua (algunas rotas)
-    [{ x: -168, y: -104, r: 17, temple: true },
-      { x: -134, y: -104, r: 2.2, col: true },
-      { x: -144, y: -86, r: 2.2, col: true, broken: true },
-      { x: -168, y: -78, r: 2.2, col: true },
-      { x: -192, y: -86, r: 2.2, col: true },
-      { x: -202, y: -104, r: 2.2, col: true, broken: true },
-      { x: -192, y: -122, r: 2.2, col: true },
-      { x: -168, y: -130, r: 2.2, col: true, broken: true },
-      { x: -144, y: -122, r: 2.2, col: true }],
+    [{ x: -188.8, y: -117.6, r: 17, temple: true },
+      { x: -154.8, y: -117.6, r: 2.2, col: true },
+      { x: -164.8, y: -99.6, r: 2.2, col: true, broken: true },
+      { x: -188.8, y: -91.6, r: 2.2, col: true },
+      { x: -212.8, y: -99.6, r: 2.2, col: true },
+      { x: -222.8, y: -117.6, r: 2.2, col: true, broken: true },
+      { x: -212.8, y: -135.6, r: 2.2, col: true },
+      { x: -188.8, y: -143.6, r: 2.2, col: true, broken: true },
+      { x: -164.8, y: -135.6, r: 2.2, col: true }],
     [],
     [], [],
   ];
@@ -122,8 +124,10 @@ const MAP = (() => {
         continue;
       }
       const d = Math.sqrt(dx * dx + dy * dy);
-      if (d > is.r + 7) continue;
-      const ri = d <= is.r ? 1 + (is.r - d) * 0.2 : d <= is.r + 1.6 ? 1 - (d - is.r) * 0.07 / 1.6 : Math.max(0, 0.93 - (d - is.r - 1.6) * 0.6 / 4.4);
+      if (d > is.r + SHALLOW) continue;
+      // fuera de la orilla, el agua pasa poco a poco de somera a la hondura que tenga el lago ahí (sin escalón:
+      // antes se cortaba de golpe y en medio del lago se veía un aro claro alrededor del islote)
+      const ri = d <= is.r ? 1 + (is.r - d) * 0.2 : d <= is.r + 1.6 ? 1 - (d - is.r) * 0.07 / 1.6 : r + (0.93 - r) * (1 - (d - is.r - 1.6) / (SHALLOW - 1.6)) ** 2;
       if (ri > r) r = ri;
     }
     q.z = z1; q.z2 = z2; q.w = wz; q.r = r; q.e = e;

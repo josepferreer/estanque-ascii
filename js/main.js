@@ -116,6 +116,10 @@
   S.secrets = S.secrets || {}; S.found = S.found || {}; S.hybrids = S.hybrids || {};
   S.up = { ...freshUp(), ...(S.up || {}) };
   if (S.sound === undefined) S.sound = true;
+  // el dragón del laboratorio (26/11) ya no existe: las partidas que lo tenían se quedan con una carpa dragón
+  S.carps.forEach((c) => { if (c.sp === 'ryu') c.sp = 'dragon'; });
+  (S.eggs || []).forEach((e) => { if (e.sp === 'ryu') e.sp = 'dragon'; });
+  if (S.album && S.album.ryu) { S.album.dragon = (S.album.dragon || 0) + S.album.ryu; delete S.album.ryu; }
   S.lab = S.lab || { built: false };
   SOUND.set(S.sound);
 
@@ -185,7 +189,7 @@
   // especie de una carpa: la de los datos, la de una cría (mezcla de sus padres) o la de la fortuna
   const spOf = (c) => (c.fortune ? FORTUNE : c.hy ? c.hy : SPECIES[c.sp] || SPECIES.gris);
   // largo de una carpa: el de su tamaño, por lo largo que sea su especie (el dragón es mucho más largo)
-  const lenC = (c) => lenOf(stageOf(c.xp)) * (spOf(c).long || 1);
+  const lenC = (c) => lenOf(stageOf(c.xp));
   function resetSpine(c) {
     const sl = lenC(c) / (M - 1);
     c.spine = [];
@@ -736,7 +740,7 @@
         SPOT.crystals.push({ x, y, a: p.a, s: 4 + rand() * 2.5, col: i % 2 ? '190,150,255' : '120,240,255' });
       }
     }
-    SPOT.shaft = [140, -44];                                    // un agujero en el techo: entra un rayo de luz
+    SPOT.shaft = [MAP.Z[3].x - 20, MAP.Z[3].y];                 // un agujero en el techo: entra un rayo de luz (va con la zona)
     // templo: baldosas de la plaza hundida (las que quedan bajo el agua; faltan algunas)
     SPOT.tiles = [];
     const T = MAP.ISLANDS[5].find((is) => is.temple);
@@ -1321,118 +1325,6 @@
     for (let i = 0; i < n; i++) g.quadraticCurveTo(poly[i].x, poly[i].y, ...mid(poly[i], poly[(i + 1) % n]));
     g.closePath();
   }
-  // ── criaturas del laboratorio: el mismo esqueleto que una carpa, con otro cuerpo ──
-  // puntos del cuerpo: amp = cuánto ondula, wave = lo corta que es la onda, env(s) = dónde ondula,
-  // wid(s) = medio ancho en cada punto (s = 0 en la cabeza, 1 en la cola), en fracción del largo
-  function spinePts(c, L, ampK, wave, env, wid) {
-    const sp_ = c.spine, amp = L * ampK * (0.45 + clamp(c.speed / 8, 0, 1));
-    return sp_.map((p, i) => {
-      const a = sp_[Math.max(i - 1, 0)], b = sp_[Math.min(i + 1, M - 1)];
-      let tx = a.x - b.x, ty = a.y - b.y; const d = Math.hypot(tx, ty) || 1; tx /= d; ty /= d;
-      const s = i / (M - 1), nx = -ty, ny = tx, off = Math.sin(c.phase - i * wave) * amp * env(s);
-      return { x: p.x + nx * off, y: p.y + ny * off, tx, ty, nx, ny, w: wid(s) * L };
-    });
-  }
-  function tube(P, ox, oy) {
-    const left = P.map((p) => ({ x: p.x + p.nx * p.w + ox, y: p.y + p.ny * p.w + oy }));
-    const right = P.map((p) => ({ x: p.x - p.nx * p.w + ox, y: p.y - p.ny * p.w + oy })).reverse();
-    smoothClosed([{ x: P[0].x + P[0].tx * P[0].w + ox, y: P[0].y + P[0].ty * P[0].w + oy }, ...left, ...right]);
-  }
-  // pata que sale del costado (side = 1 o -1) y rema: swing > 0 la lleva hacia delante
-  function leg(p, side, len, swing, col, th) {
-    const ox = p.nx * side, oy = p.ny * side;
-    const bx = p.x + ox * p.w * 0.7, by = p.y + oy * p.w * 0.7;
-    const kx = bx + ox * len * 0.6 + p.tx * swing * len * 0.4, ky = by + oy * len * 0.6 + p.ty * swing * len * 0.4;
-    const fx = kx + ox * len * 0.2 - p.tx * len * (0.35 - swing * 0.25), fy = ky + oy * len * 0.2 - p.ty * len * (0.35 - swing * 0.25);
-    g.strokeStyle = col; g.lineWidth = th; g.lineCap = 'round'; g.lineJoin = 'round';
-    g.beginPath(); g.moveTo(bx, by); g.lineTo(kx, ky); g.lineTo(fx, fy); g.stroke();
-    g.fillStyle = col; g.beginPath(); g.arc(fx, fy, th * 0.75, 0, 7); g.fill();
-  }
-  function drawCreature(c, sp) {
-    const rar = sp.r, L = lenC(c), cols = bodyColors(sp), dragon = sp.shape === 'dragon';
-    const P = dragon
-      // dragón: largo y fino, ondula entero como una serpiente
-      ? spinePts(c, L, 0.07, 1.1, (s) => 0.35 + 0.65 * s, (s) => (s < 0.1 ? 0.042 : 0.048 * (1 - (s - 0.1) / 0.9 * 0.75)))
-      // komodo: cabeza, cuello, tronco ancho y una cola gruesa que se afila
-      : spinePts(c, L, 0.05, 0.8, (s) => s ** 1.2, (s) => (s < 0.1 ? 0.07 : s < 0.2 ? 0.06 : s < 0.5 ? 0.1 : 0.1 * Math.max(0.08, 1 - (s - 0.5) / 0.5)));
-    const alpha = (c.hunger < 25 ? 0.6 : 1) * (0.9 + 0.1 * Math.sin(t * 3));
-    glow(P[2].x, P[2].y, L * 0.8, `rgba(${hex(RARITY[rar].c).join(',')},A)`, 0.25 * (0.8 + 0.2 * Math.sin(t * 2 + c.x)));
-    const H = P[0], E = P[M - 1], dark = 'rgba(30,22,12,0.85)';
-    g.save();
-    g.fillStyle = 'rgba(0,0,0,0.28)'; tube(P, 1.2, 1.6); g.fill();
-    g.globalAlpha = alpha;
-    // patas (debajo del cuerpo)
-    const gait = c.phase * 0.55;
-    if (dragon) {
-      [[2, 1, 0], [2, -1, Math.PI], [5, 1, Math.PI], [5, -1, 0]].forEach(([i, side, ph]) => leg(P[i], side, L * 0.09, Math.sin(gait + ph) * 0.8, cols[1], L * 0.018));
-    } else {
-      [[2, 1, 0], [2, -1, Math.PI], [4, 1, Math.PI], [4, -1, 0]].forEach(([i, side, ph]) => leg(P[i], side, L * 0.15, Math.sin(gait + ph) * 0.9, cols[2], L * 0.035));
-    }
-    // cola del dragón: un penacho de fuego
-    if (dragon) {
-      const D = { x: -E.tx, y: -E.ty };
-      ['#ff7b00', '#ffd23f', '#ff7b00'].forEach((col, k) => {
-        const sd = (k - 1) * 0.9, fl = 1 + 0.25 * Math.sin(t * 9 + k * 2), len = L * 0.1 * fl * (k === 1 ? 1.3 : 1);
-        g.fillStyle = col; g.beginPath(); g.moveTo(E.x + E.nx * 0.6, E.y + E.ny * 0.6); g.lineTo(E.x - E.nx * 0.6, E.y - E.ny * 0.6);
-        g.lineTo(E.x + D.x * len + E.nx * sd * L * 0.03, E.y + D.y * len + E.ny * sd * L * 0.03); g.closePath(); g.fill();
-      });
-    }
-    // cuerpo y dibujo de la piel
-    g.fillStyle = cols[0]; tube(P, 0, 0); g.fill();
-    g.save(); tube(P, 0, 0); g.clip();
-    if (dragon) {                                                  // anillos de color a lo largo
-      for (let j = 1; j < M * 2 - 1; j++) {
-        const i = j / 2, a = P[Math.floor(i)], b = P[Math.min(Math.ceil(i), M - 1)];
-        g.fillStyle = cols[j % cols.length]; g.beginPath(); g.arc((a.x + b.x) / 2, (a.y + b.y) / 2, (a.w + b.w) * 0.36, 0, 7); g.fill();
-      }
-    } else {                                                       // escamas moteadas
-      for (let j = 0; j < 40; j++) {
-        const i = hash(j, 1) * (M - 1), a = P[Math.floor(i)], side = (hash(j, 2) - 0.5) * 1.6;
-        g.fillStyle = cols[1 + (j % (cols.length - 1))]; g.fillRect(a.x + a.nx * a.w * side - 0.35, a.y + a.ny * a.w * side - 0.35, 0.7, 0.7);
-      }
-    }
-    g.restore();
-    // cresta del dragón: púas doradas por el lomo
-    if (dragon) {
-      g.fillStyle = '#ffe9a0';
-      for (let i = 1; i < M - 1; i++) {
-        const p = P[i], s = (0.7 * (1 - i / M) + 0.25) * L / 20;
-        g.beginPath(); g.moveTo(p.x + p.tx * s, p.y + p.ty * s); g.lineTo(p.x + p.nx * s * 0.5, p.y + p.ny * s * 0.5);
-        g.lineTo(p.x - p.tx * s * 1.4, p.y - p.ty * s * 1.4); g.lineTo(p.x - p.nx * s * 0.5, p.y - p.ny * s * 0.5); g.closePath(); g.fill();
-      }
-    }
-    // cabeza
-    const ang = Math.atan2(H.ty, H.tx), hx = H.x + H.tx * L * (dragon ? 0.035 : 0.05), hy = H.y + H.ty * L * (dragon ? 0.035 : 0.05);
-    const hrx = L * (dragon ? 0.055 : 0.085), hry = L * (dragon ? 0.045 : 0.06);
-    const snx = hx + H.tx * hrx, sny = hy + H.ty * hrx;           // punta del morro
-    if (!dragon && ((t * 0.6 + c.phase * 0.05) % 1) < 0.14) {     // el komodo saca la lengua bífida
-      const tl = L * 0.08, fx = snx + H.tx * tl, fy = sny + H.ty * tl;
-      g.strokeStyle = '#e63946'; g.lineWidth = 0.35; g.beginPath(); g.moveTo(snx, sny); g.lineTo(fx, fy);
-      g.lineTo(fx + H.tx * 1 + H.nx * 0.8, fy + H.ty * 1 + H.ny * 0.8); g.moveTo(fx, fy); g.lineTo(fx + H.tx * 1 - H.nx * 0.8, fy + H.ty * 1 - H.ny * 0.8); g.stroke();
-    }
-    g.fillStyle = dragon ? cols[0] : cols[0]; g.beginPath(); g.ellipse(hx, hy, hrx, hry, ang, 0, 7); g.fill();
-    if (dragon) {
-      g.fillStyle = cols[1]; g.beginPath(); g.ellipse(hx + H.tx * hrx * 0.45, hy + H.ty * hrx * 0.45, hrx * 0.5, hry * 0.6, ang, 0, 7); g.fill();     // morro dorado
-      g.strokeStyle = '#ffe9a0'; g.lineWidth = L * 0.014; g.lineCap = 'round';
-      [1, -1].forEach((side) => {                                  // cuernos hacia atrás
-        g.beginPath(); g.moveTo(hx + H.nx * side * hry * 0.5, hy + H.ny * side * hry * 0.5);
-        g.quadraticCurveTo(hx - H.tx * L * 0.05 + H.nx * side * L * 0.05, hy - H.ty * L * 0.05 + H.ny * side * L * 0.05,
-          hx - H.tx * L * 0.1 + H.nx * side * L * 0.07, hy - H.ty * L * 0.1 + H.ny * side * L * 0.07); g.stroke();
-      });
-      g.strokeStyle = '#ffd23f'; g.lineWidth = 0.4;
-      [1, -1].forEach((side) => {                                  // bigotes largos que ondean
-        const wv = Math.sin(t * 3 + side + c.phase * 0.3) * L * 0.04;
-        g.beginPath(); g.moveTo(snx + H.nx * side * hry * 0.4, sny + H.ny * side * hry * 0.4);
-        g.quadraticCurveTo(snx + H.tx * L * 0.06 + H.nx * side * L * 0.06, sny + H.ty * L * 0.06 + H.ny * side * L * 0.06,
-          snx - H.tx * L * 0.06 + H.nx * side * (L * 0.16 + wv), sny - H.ty * L * 0.06 + H.ny * side * (L * 0.16 + wv)); g.stroke();
-      });
-    }
-    g.fillStyle = dragon ? '#fff3b0' : dark;                       // ojos
-    [1, -1].forEach((side) => { g.beginPath(); g.arc(hx + H.nx * side * hry * 0.65, hy + H.ny * side * hry * 0.65, dragon ? 0.6 : 0.5, 0, 7); g.fill(); });
-    g.restore();
-    if (Math.random() < 5 * FRAME) { g.fillStyle = dragon ? '#ffd23f' : '#fff'; g.fillRect(c.x + rnd(-L / 3, L / 3), c.y + rnd(-L / 3, L / 3), 1, 1); }
-  }
-
   // efectos de las carpas de otros mundos, por encima del cuerpo
   function otherWorldFx(c, fx, P, L) {
     if (!fx) return;
@@ -1455,7 +1347,6 @@
   }
 
   function drawCarp(c) {
-    if (spOf(c).shape) { drawCreature(c, spOf(c)); return; }
     const sp = spOf(c), rar = sp.r, st = stageOf(c.xp), L = lenC(c), Wm = L * 0.2;
     const cols = bodyColors(sp), fx = sp.fx;
     const sp_ = c.spine, spd = clamp(c.speed / 8, 0, 1), amp = L * 0.1 * (0.45 + spd);
@@ -1512,6 +1403,13 @@
       g.beginPath(); g.arc((a.x + b.x) / 2 + (hash(j, 3) - 0.5) * Wm * 0.5, (a.y + b.y) / 2 + (hash(j, 4) - 0.5) * Wm * 0.5, Wm * (0.8 + hash(j, 5) * 0.5), 0, 7); g.fill();
     }
     if (sp.head) { g.fillStyle = sp.head; g.beginPath(); g.arc(P[1].x, P[1].y, Wm * 0.75, 0, 7); g.fill(); }
+    if (sp.deco === 'escamas') {                                   // komodo: piel de escamas, con motas claras y oscuras
+      for (let j = 0; j < 30; j++) {
+        const u = 1 + hash(j, 11) * (M - 3), a = P[Math.floor(u)], b = P[Math.ceil(u)], f = u % 1, side = (hash(j, 12) - 0.5) * 1.7;
+        const x = a.x + (b.x - a.x) * f + a.nx * a.w * side, y = a.y + (b.y - a.y) * f + a.ny * a.w * side;
+        g.fillStyle = j % 3 ? 'rgba(30,34,20,0.45)' : 'rgba(214,204,150,0.5)'; g.beginPath(); g.arc(x, y, Wm * (0.12 + hash(j, 13) * 0.12), 0, 7); g.fill();
+      }
+    }
     g.strokeStyle = 'rgba(255,255,255,0.22)'; g.lineWidth = Wm * 0.7; g.lineCap = 'round';
     g.beginPath(); g.moveTo(P[1].x, P[1].y); for (let i = 2; i < M - 1; i++) g.lineTo(P[i].x, P[i].y); g.stroke();
     if (fx === 'stars') {                                          // la estelar lleva un cielo dentro que se mueve
@@ -1522,6 +1420,30 @@
       }
     }
     g.restore();
+    if (sp.deco === 'dragon') {                                    // carpa dragón: cresta dorada, bigotes largos y cola que arde
+      g.fillStyle = '#ffd23f';
+      for (let i = 1; i < M - 2; i++) {
+        const q = P[i], h = Wm * (0.55 - i * 0.05);
+        g.beginPath(); g.moveTo(q.x - q.tx * Wm * 0.35, q.y - q.ty * Wm * 0.35); g.lineTo(q.x + q.tx * h, q.y + q.ty * h);
+        g.lineTo(q.x + q.nx * Wm * 0.18, q.y + q.ny * Wm * 0.18); g.closePath(); g.fill();
+      }
+      const H = P[0];
+      g.strokeStyle = '#ffe9a8'; g.lineWidth = Math.max(0.25, Wm * 0.14); g.lineCap = 'round';
+      [1, -1].forEach((side) => {
+        const bx = H.x + H.tx * H.w * 0.6 + H.nx * H.w * 0.5 * side, by = H.y + H.ty * H.w * 0.6 + H.ny * H.w * 0.5 * side;
+        const sw = Math.sin(t * 2.6 + c.phase + side) * L * 0.08, lw = L * 0.42;
+        g.beginPath(); g.moveTo(bx, by);
+        g.quadraticCurveTo(bx + H.nx * side * lw * 0.45 + H.tx * lw * 0.1, by + H.ny * side * lw * 0.45 + H.ty * lw * 0.1,
+          bx + H.nx * side * (lw * 0.5 + sw) - H.tx * lw * 0.55, by + H.ny * side * (lw * 0.5 + sw) - H.ty * lw * 0.55);
+        g.stroke();
+      });
+      const T = P[M - 1];
+      for (let k = 0; k < 5; k++) {
+        const ph = t * 1.6 + k / 5, age = ph % 1, h = hash(k, Math.floor(ph));
+        g.fillStyle = `rgba(255,${110 + 110 * h | 0},40,${(1 - age) * 0.85})`;
+        g.fillRect(T.x - T.tx * (L * 0.35 + age * L * 0.3) + (h - 0.5) * 2.5, T.y - T.ty * (L * 0.35 + age * L * 0.3) + (hash(Math.floor(ph), k) - 0.5) * 2.5, 0.8, 0.8);
+      }
+    }
     g.fillStyle = 'rgba(0,0,0,0.85)';
     [1, -1].forEach((side) => { g.beginPath(); g.arc(P[0].x + P[0].nx * P[0].w * 0.75 * side - P[0].tx * 0.2, P[0].y + P[0].ny * P[0].w * 0.75 * side - P[0].ty * 0.2, 0.55, 0, 7); g.fill(); });
     g.restore();
@@ -1588,7 +1510,7 @@
       c.ang += (l && !r ? -1 : r && !l ? 1 : c.avoid || (c.avoid = Math.random() < 0.5 ? -1 : 1)) * 3.4 * dt;
     } else c.avoid = 0;
     const near = luring ? clamp(Math.hypot(tx - c.x, ty - c.y) / 8, 0.25, 1) : 1;      // junto al dedo, se calma
-    c.speed = (4.2 + stage * 0.5) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 1.9 : 1) * near * (flee !== null ? 1.8 : 1) * (c.fortune ? 1.2 : 1) * (spOf(c).spd || 1);
+    c.speed = (4.2 + stage * 0.5) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 1.9 : 1) * near * (flee !== null ? 1.8 : 1) * (c.fortune ? 1.2 : 1);
     const nx = c.x + Math.cos(c.ang) * c.speed * dt, ny = c.y + Math.sin(c.ang) * c.speed * dt;
     if (waterAt(nx, ny, 0.82)) { c.x = nx; c.y = ny; }
     else { c.ang += Math.PI * 0.6; c.route = []; c.chaseP = null; c.retarget = 0; }      // choca con la orilla: replanifica

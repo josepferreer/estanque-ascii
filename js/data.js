@@ -46,7 +46,7 @@ const DATA = (() => {
     piedra:     { name: 'Carpa de piedra',   r: 0, pat: ['#8d99ae', '#6c757d'] },
     jade:       { name: 'Jade',              r: 1, pat: ['#2ec4b6', '#7bdcb5'] },
     ambar:      { name: 'Ámbar',             r: 2, pat: ['#ff9f1c', '#ffbf69'] },
-    dragon:     { name: 'Carpa dragón',      r: 3, pat: ['#e63946', '#ffd23f', '#e63946', '#2ec4b6'] },
+    dragon:     { name: 'Carpa dragón',      r: 3, pat: ['#e63946', '#ffd23f', '#e63946', '#2ec4b6'], deco: 'dragon' },
     celestial:  { name: 'Celestial',         r: 4, pat: ['#ffffff'], rainbow: true },
     // Secretos: solo se consiguen al encontrar su rincón (no salen de huevos)
     eco:        { name: 'Carpa eco',         r: 3, pat: ['#7b6cff', '#b8b0ff', '#3a2f8f'], secret: true },
@@ -60,15 +60,13 @@ const DATA = (() => {
     estelar:    { name: 'Carpa estelar',     r: 4, pat: ['#101c4f', '#1c2c72', '#0b1438'], fx: 'stars' },
     estatica:   { name: 'Carpa estática',    r: 2, pat: ['#9a9a9a', '#d8d8d8', '#5a5a5a', '#ffffff'] },
     glitch:     { name: 'Carpa glitch',      r: 4, pat: ['#00ff9c', '#ff00e6', '#00e5ff', '#111111'], fx: 'glitch' },
-    // Criaturas del laboratorio: solo salen de una fórmula (shape = cómo se dibujan, long = largo, spd = velocidad)
-    ryu:        { name: 'Dragón',            r: 4, pat: ['#d62839', '#ffd23f', '#d62839', '#ff7b00'], shape: 'dragon', long: 2.1, spd: 1.1, lab: true },
-    komodo:     { name: 'Komodo',            r: 4, pat: ['#6b7550', '#857f58', '#5b6446', '#9a9068'], shape: 'komodo', long: 1.25, spd: 0.7, lab: true },
+    // Carpas del laboratorio: solo salen de una fórmula (deco = rasgos que se pintan sobre el cuerpo de carpa)
+    komodo:     { name: 'Carpa komodo',      r: 4, pat: ['#6b7550', '#857f58', '#5b6446', '#9a9068'], head: '#4f5739', deco: 'escamas', lab: true },
   };
 
   // Laboratorio: se construye una vez; mezcla dos carpas adultas. Ciertas parejas dan una criatura.
   const LAB = { cost: 2000 };
   const RECIPES = [
-    { sp: 'ryu', a: 'dragon', b: 'brasa', hint: 'una carpa de leyenda y otra que arde' },
     { sp: 'komodo', a: 'piedra', b: 'musgo', hint: 'algo duro como la roca y algo verde' },
   ];
 
