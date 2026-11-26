@@ -1760,33 +1760,49 @@
   }
   function openGacha(zi) { gachaZone = zi; lastBatch = null; show('gacha'); }
 
+  // marco, color y adornos de cada zona (el marco se pinta en frames.js)
+  const GACCENT = { estanque: '#6ab85e', nenufares: '#f49ac0', cascada: '#8fd4f4', cueva: '#78f0ff', luna: '#fff3b0', templo: '#e0b040', portal: '#c77dff' };
+  const GORN = { estanque: '~ ', nenufares: '@ ~ ~ * ~ ~ ', cascada: '| : ', cueva: '/\\ /\\ &lt;&gt; ', luna: '* . ) . * . ( . ', templo: '[=]', portal: '&lt;&gt; ~ ~ ' };
+  const GART = '  .-"-.\n ( (*) )\n  \'-.-\'';
+  const gbar = (n, tot, w) => { const k = Math.max(0, Math.min(w, Math.round(n / tot * w))); return '█'.repeat(k) + '░'.repeat(w - k); };
+  let gachaDet = false;                  // el apartado «detalles» del panel, desplegado o no
   function gachaHtml() {
     const zi = gachaZone, z = ZONES[zi], st = S.gacha.pity[zi] || [0, 0, 0], price = pullPrice(zi), odds = oddsOf(zi), pool = poolOf(zi);
     const free = S.gacha.free.filter((f) => f === zi).length, closed = zi === PORTAL && !portalOpen(), full = S.carps.length >= capacity();
     const can = (n) => (closed || !!gx || S.perlas < price * n ? 'disabled' : '');
-    const nameOf = (id) => (S.album[id] ? SPECIES[id].name : '???');
-    let out = `<div class="zone-title">${zi === PORTAL ? 'nenúfar del vacío' : 'nenúfar'} · ${z.name} <span>${S.carps.length}/${capacity()} carpas</span></div>`;
-    if (closed) out += `<div class="note">el portal está cerrado: abre a las ${portalNext()}</div>`;
-    else if (zi === PORTAL) out += `<div class="note">hoy da al ${worldToday().name}</div>`;
-    out += `<div class="pulls"><button data-pull="1" ${can(1)}>tirar · ${fmt(price)} perlas</button><button data-pull="10" ${can(10)}>×10 · ${fmt(price * 10)}</button></div>`;
-    const F = GACHA.fichas, okZone = zi <= F.maxZone, nf = S.gacha.fichas;
-    out += `<button class="back" data-ficha ${!okZone || nf < 1 || gx ? 'disabled' : ''}>tirar con ficha · ${nf > F.max ? nf : nf + "/" + F.max}</button>`;
-    out += `<div class="note">${okZone ? (nf >= F.max ? 'fichas al máximo' : `la siguiente ficha en ${Math.floor((F.every - (S.gacha.fichaT || 0)) / 60)}:${String(Math.floor((F.every - (S.gacha.fichaT || 0)) % 60)).padStart(2, '0')}`) + ` · ${F.daily} de regalo cada día` : `las fichas valen del ${ZONES[0].name} a ${ZONES[F.maxZone].name}`}</div>`;
-    if (free) out += `<button class="back" data-free ${closed || gx ? 'disabled' : ''}>abrir cápsula guardada (${free})</button>`;
-    if (full) out += '<div class="note">el estanque está lleno: las carpas nuevas vuelven al río y te dan sus perlas</div>';
+    const nameOf = (x) => (S.album[x] ? SPECIES[x].name : '???');
+    const rc = (x) => RARITY[SPECIES[x].r].c;
+    const present = RARITY.map((r, i) => i).filter((i) => odds[i] > 0);
+    let out = `<div class="ghd"><div class="gnm">${z.name}</div><div class="sub">${S.carps.length}/${capacity()} carpas</div></div>`;
+    if (closed) out += `<div class="note">cerrado · abre a las ${portalNext()}</div>`;
+    else if (zi === PORTAL) out += `<div class="note">hoy: ${worldToday().name}</div>`;
+    out += `<div class="pulls"><button class="main" data-pull="1" ${can(1)}>tirar · ${fmt(price)}</button><button data-pull="10" ${can(10)}>×10 · ${fmt(price * 10)}</button></div>`;
+    const F = GACHA.fichas, nf = S.gacha.fichas, left = Math.max(0, F.every - (S.gacha.fichaT || 0));
+    if (zi <= F.maxZone) out += `<button class="gb" data-ficha ${nf < 1 || gx ? 'disabled' : ''}>${nf > 0 ? `ficha gratis <span class="chip">${nf}</span>` : `próxima ficha · ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`}</button>`;
+    if (free) out += `<button class="gb" data-free ${closed || gx ? 'disabled' : ''}>cápsula guardada <span class="chip">${free}</span></button>`;
+    if (full) out += '<div class="note">estanque lleno · las nuevas vuelven al río</div>';
     if (lastBatch) {
-      out += `<div class="zone-title">resultado ×${lastBatch.length}</div><div class="odds">` + lastBatch.map((r) => `<div style="color:${RARITY[SPECIES[r.id].r].c}">${SPECIES[r.id].name}${r.new ? ' · nueva' : ''}${r.full ? ' · al río' : ''}</div>`).join('') + '</div>';
+      const cnt = RARITY.map((r, i) => ({ r, n: lastBatch.filter((b) => SPECIES[b.id].r === i).length })).filter((o) => o.n);
+      const nuevas = lastBatch.filter((b) => b.new).map((b) => SPECIES[b.id].name);
+      out += `<div class="lbl">resultado ×${lastBatch.length}</div><div class="leg">${cnt.map((o) => `<span style="--c:${o.r.c}">${o.n} ${o.r.n}</span>`).join('')}</div>${nuevas.length ? `<div class="note">nuevas: ${nuevas.join(', ')}</div>` : ''}`;
     }
-    out += '<div class="zone-title">probabilidades</div><dl class="facts">' + RARITY.map((r, i) => {
-      if (!odds[i]) return '';
-      const sp = pool.filter((id) => SPECIES[id].r === i).map(nameOf).join(', ');
-      return `<dt style="color:${r.c}">${r.n}</dt><dd>${odds[i].toFixed(odds[i] < 1 ? 1 : odds[i] < 10 ? 1 : 0)} % <span class="sub">· ${sp}</span></dd>`;
-    }).join('') + '</dl>';
-    const topR = Math.max(...pool.map((id) => SPECIES[id].r));
-    const gar = GACHA.pity.map((p, i) => (topR >= p.min ? `${RARITY[p.min].n}${i === 0 ? ' o mejor' : ''} en ${Math.max(1, p.every - (st[i] || 0))}` : null)).filter(Boolean);
-    out += `<div class="note">garantía: ${gar.join(' · ')} tiradas</div>`;
-    const hist = S.gacha.hist.filter((h) => h.zi === zi).slice(0, 10);
-    if (hist.length) out += '<div class="zone-title">últimas cápsulas</div><div class="odds">' + hist.map((h) => `<div style="color:${RARITY[SPECIES[h.id].r].c}">${SPECIES[h.id].name}${h.new ? ' · nueva' : ''}</div>`).join('') + '</div>';
+    out += '<div class="lbl">qué puede salir</div><div class="stack">' + present.map((i) => `<i style="width:${odds[i]}%;background:${RARITY[i].c}"></i>`).join('') + '</div>';
+    out += '<div class="leg">' + present.map((i) => `<span style="--c:${RARITY[i].c}">${RARITY[i].n}</span>`).join('') + '</div>';
+    const topR = Math.max(...pool.map((x) => SPECIES[x].r)), gar = GACHA.pity.map((p, i) => ({ p, i, rem: Math.max(1, p.every - (st[i] || 0)) })).filter((o) => topR >= o.p.min);
+    const near = gar.slice().sort((a, b) => a.rem - b.rem)[0];
+    if (near) out += `<div class="note">${RARITY[near.p.min].n}${near.i === 0 ? ' o mejor' : ''} segura en ${near.rem} ${near.rem === 1 ? 'tirada' : 'tiradas'}</div>`;
+    out += `<button class="lnk" data-det>${gachaDet ? '▾' : '▸'} detalles</button>`;
+    if (gachaDet) {
+      RARITY.forEach((r, i) => {
+        if (!odds[i]) return;
+        const names = pool.filter((x) => SPECIES[x].r === i).map(nameOf).join(', ');
+        out += `<div class="orow"><span style="color:${r.c}">${r.n}</span><span class="gbar" style="color:${r.c}">${gbar(odds[i], 100, 18)}</span><span>${odds[i].toFixed(odds[i] < 10 ? 1 : 0)} %</span></div><div class="sub gsp">${names}</div>`;
+      });
+      out += '<div class="lbl">garantías</div>' + gar.map(({ p, i }) => `<div class="orow"><span style="color:${RARITY[p.min].c}">${RARITY[p.min].n}${i === 0 ? '+' : ''}</span><span class="gbar" style="color:${RARITY[p.min].c}">[${gbar(st[i] || 0, p.every, 14)}]</span><span>${Math.min(st[i] || 0, p.every)}/${p.every}</span></div>`).join('');
+      const hist = S.gacha.hist.filter((h) => h.zi === zi).slice(0, 24);
+      if (hist.length) out += '<div class="lbl">últimas</div><div class="hist">' + hist.map((h) => `<span class="sq" style="background:${rc(h.id)}" title="${SPECIES[h.id].name}"></span>`).join('') + '</div>';
+      out += `<div class="note">${F.max} fichas como mucho · una cada 20 min y ${F.daily} de regalo al día (del ${ZONES[0].name} a ${ZONES[F.maxZone].name})</div>`;
+    }
     return out;
   }
 
@@ -2192,7 +2208,7 @@
     }
     selected = null;
     if (S.food <= 0) { toast('sin comida, espera un poco', '#ffb703', 1200); refreshInfo(); return; }
-    if (waterAt(x, y, 0.92)) { S.food--; pellets.push({ x, y, born: t }); ripple(x, y, true); SOUND.plop(); quest('feed'); refreshHud(); }
+    if (waterAt(x, y, 0.92)) { S.food--; pellets.push({ x, y, born: t }); ripple(x, y, true); SOUND.plop(); quest('feed'); S.hintN = (S.hintN || 0) + 1; refreshHud(); }
     refreshInfo();
   }
 
@@ -2268,7 +2284,7 @@
   // ───────────────────────── HUD ─────────────────────────
   function refreshHud() {
     const zi = MAP.zoneAt(cam.x, cam.y);
-    const parts = [isOpen(zi) ? zoneName(zi) : '', light.name];
+    const parts = [isOpen(zi) ? zoneName(zi) : ''];
     if (raining) parts.push('lluvia');
     $('#zoneName').textContent = parts.filter(Boolean).join(' · ');
     if (isOpen(zi)) document.documentElement.style.setProperty('--accent', ZINFO[zi].water);
@@ -2277,7 +2293,7 @@
     // con dos o más perlas flotando aparece el botón para recogerlas todas
     const n = S.floating.length, btn = $('#collect');
     btn.hidden = n < 2;
-    if (n >= 2) btn.textContent = `recoger ${n} perlas · +${fmt(S.floating.reduce((a, p) => a + p.v, 0))}`;
+    if (n >= 2) btn.textContent = `recoger +${fmt(S.floating.reduce((a, p) => a + p.v, 0))}`;
     refreshNav();
   }
   function refreshNav() {
@@ -2290,8 +2306,9 @@
   const bar = (v) => { const full = Math.round(clamp(v, 0, 100) / 10); return `[${'█'.repeat(full)}${'░'.repeat(10 - full)}]`; };
   function refreshInfo() {
     const c = selected, el = $('#info');
+    el.hidden = false;
     el.classList.toggle('sel', !!c);
-    if (!c) { el.textContent = HINT; el.style.color = ''; return; }
+    if (!c) { const tip = (S.hintN || 0) < 8; el.textContent = tip ? HINT : ''; el.hidden = !tip; el.style.color = ''; return; }          // la ayuda se va cuando ya sabes jugar
     const sp = spOf(c);
     el.innerHTML = `${sp.name} · ${RARITY[sp.r].n} · ${bar(c.hunger)} · <span class="more">ver ficha</span>`;
     el.style.color = RARITY[sp.r].c;
@@ -2334,7 +2351,7 @@
   function labHtml() {
     if (!S.lab.built) {
       return `<div class="zone-title">laboratorio</div><div class="row"><pre>${LAB_ART}</pre>
-        <div><div class="nm">Construir el laboratorio</div><div class="sub">en el islote del Estanque. Mezcla dos carpas adultas: sale una cría con algo de cada una y, con la pareja justa, una criatura que no sale de ninguna cápsula.</div></div>
+        <div><div class="nm">Construir el laboratorio</div><div class="sub">mezcla dos carpas adultas</div></div>
         <button data-build ${S.perlas < LAB.cost ? 'disabled' : ''}>${fmt(LAB.cost)} perlas</button></div>`;
     }
     if (labA && !canMix(labA)) labA = null;
@@ -2352,7 +2369,7 @@
       const what = rec ? (S.album[rec.sp] ? `saldrá: ${SPECIES[rec.sp].name}` : 'la mezcla burbujea de una forma rara...') : 'saldrá una cría con algo de cada una';
       const full = S.carps.length >= capacity();
       out += `<div class="note">${what}</div><button class="mix" data-mix ${mix || full || S.perlas < cost ? 'disabled' : ''}>${mix ? 'ya hay una mezcla en marcha' : full ? 'el estanque está lleno' : `mezclar · ${fmt(cost)} perlas`}</button>`;
-    } else out += '<div class="note">elige dos carpas adultas; después de mezclar descansan 10 minutos</div>';
+    } else out += '<div class="note">elige dos carpas adultas</div>';
     out += `<div class="zone-title">fórmulas <span>${RECIPES.filter((r) => S.album[r.sp]).length}/${RECIPES.length}</span></div><div class="grid">` +
       RECIPES.map((r) => (S.album[r.sp]
         ? `<div class="card"><div class="spr">${spriteHtml(SPECIES[r.sp])}</div><div class="nm">${SPECIES[r.sp].name}</div><div class="nm sub">${SPECIES[r.a].name} + ${SPECIES[r.b].name}</div></div>`
@@ -2366,14 +2383,15 @@
     if (kind === 'map') {
       html = ZONES.map((z, i) => {
         const open = S.unlocked[i], visible = open || S.unlocked[i - 1];
+        if (!visible) return '';
         const art = visible ? ZONE_ART[i] : '???????\n???????\n???????';
         let action = '';
         if (open) action = `<button data-go="${i}">ir</button>`;
         else if (visible) action = `<button data-buy="${i}" ${S.perlas < z.cost ? 'disabled' : ''}>${fmt(z.cost)} perlas</button>`;
         const n = S.carps.filter((c) => MAP.zoneAt(c.x, c.y) === i).length;
         return `<div class="row ${visible ? '' : 'locked'}"><pre>${art}</pre>
-          <div><div class="nm">${visible ? z.name : '???'}</div><div class="sub">${open ? `${n} carpas ahora` : ''}</div></div>${action}</div>`;
-      }).join('') + SECRETS.map((s, k) => {
+          <div><div class="nm">${visible ? z.name : '???'}</div><div class="sub">${open ? n + ' carpas' : ''}</div></div>${action}</div>`;
+      }).join('') + (() => { const n = ZONES.filter((z, i) => !(S.unlocked[i] || S.unlocked[i - 1])).length; return n ? `<div class="note">${n} zonas más por descubrir</div>` : ''; })() + SECRETS.map((s, k) => {
         const i = MAIN + k, found = isOpen(i), near = isOpen(MAP.Z[i].parent);
         if (!found && !near) return '';
         return `<div class="row ${found ? '' : 'locked'}"><pre>${found ? ZONE_ART[i] : '  ???  \n  ???  \n  ???  '}</pre>
@@ -2399,7 +2417,7 @@
       html = gachaHtml();
     } else if (kind === 'upgrades') {
       html = `<div class="zone-title">mejoras</div><div class="row"><pre class="lv">${S.lab.built ? ' ok ' : '    '}</pre>
-          <div><div class="nm">Laboratorio</div><div class="sub">${S.lab.built ? 'en el islote del Estanque' : 'mezcla carpas y descubre criaturas'}</div></div>
+          <div><div class="nm">Laboratorio</div><div class="sub">${S.lab.built ? '' : 'mezcla carpas'}</div></div>
           <button data-openlab ${!S.lab.built && S.perlas < LAB.cost ? 'disabled' : ''}>${S.lab.built ? 'abrir' : fmt(LAB.cost) + ' perlas'}</button></div>` + UPGRADES.map((u) => {
         const n = lvl(u.id), max = u.cost.length, next = n < max ? u.cost[n] : null;
         return `<div class="row"><pre class="lv">${dots(n, max)}</pre>
@@ -2413,7 +2431,7 @@
         const btn = q.got ? '<span class="sub">cobrado</span>' : q.done ? `<button data-claim="${i}">cobrar</button>` : '';
         return `<div class="row"><pre class="lv">${q.done ? '  ok  ' : `${q.p}/${q.n}`}</pre>
           <div><div class="nm">${def.text}</div><div class="sub">${bar(pct)}</div></div>${btn}</div>`;
-      }).join('') + '<div class="note">mañana habrá tres nuevos</div>';
+      }).join('');
     } else if (kind === 'lab') {
       html = labHtml();
     } else if (kind === 'labpick') {
@@ -2434,7 +2452,7 @@
         const last = S.carps.length <= 1, armed = releaseArm === c, v = releaseValue(c);
         const label = last ? 'es tu única carpa' : armed ? `seguro? soltar · +${fmt(v)} perlas` : `soltar al río · +${fmt(v)} perlas`;
         const rest = c.bt && c.bt > Date.now() ? Math.ceil((c.bt - Date.now()) / 60000) : 0;
-        const breedBtn = st < 2 ? '<span class="sub">podrá mezclarse cuando sea adulta</span>' : rest ? `<span class="sub">descansando · ${rest} min</span>` : '<button data-tolab>llevar al laboratorio</button>';
+        const breedBtn = st < 2 ? '<span class="sub">cuando sea adulta</span>' : rest ? `<span class="sub">descansando · ${rest} min</span>` : '<button data-tolab>llevar al laboratorio</button>';
         html = `<div class="carp">
           <div class="carp-head"><div class="spr">${spriteHtml(sp)}</div>
             <div><div class="nm">${sp.name}</div><div style="color:${rar.c}">${rar.n}${c.hy ? ' · cría' : ''}</div></div></div>
@@ -2442,11 +2460,9 @@
             <dt>tamaño</dt><dd>${STAGE_NAMES[st]} ${grow}</dd>
             <dt>barriga</dt><dd>${bar(c.hunger)}${c.hunger < 30 ? ' <span class="sub">· con hambre no da perlas</span>' : ''}</dd>
             <dt>perlas</dt><dd>${fmt(perlaValue(c))} cada ~${PERLA_EVERY} s</dd>
-            <dt>ahora en</dt><dd>${zoneName(zi)}</dd>
-            <dt>mezcla</dt><dd>${breedBtn}</dd>
+            ${S.lab.built ? `<dt>mezcla</dt><dd>${breedBtn}</dd>` : ''}
           </dl>
           <button class="release ${armed ? 'armed' : ''}" data-release ${last ? 'disabled' : ''}>${label}</button>
-          <div class="note">soltarla deja hueco para otra carpa; sigue contando en el álbum</div>
         </div>`;
       }
     }
@@ -2455,10 +2471,27 @@
   }
 
   let sheetCarp = null, releaseArm = null, lastHtml = '', labA = null, labB = null, labSlot = 'a';
+  // el panel del nenúfar lleva el marco pintado de su zona (frames.js); los demás paneles, el de siempre
+  const sheetEl = $('#sheet'), frameCv = $('#frame');
+  let frameRO = null, frameRaf = 0;
+  const frameBorder = () => (window.innerWidth < 560 ? 36 : 52);                 // grosor del marco en píxeles
+  function drawFrame() {
+    if (openPanel !== 'gacha') return;
+    const r = sheetEl.getBoundingClientRect();
+    FRAMES.draw(frameCv, ZINFO[gachaZone].id, Math.round(r.width), Math.round(r.height), frameBorder());
+  }
+  function applyFrame() {
+    if (openPanel === 'gacha') {
+      sheetEl.classList.add('framed'); sheetEl.style.setProperty('--a', GACCENT[ZINFO[gachaZone].id]); sheetEl.style.setProperty('--fb', frameBorder() + 'px');
+      drawFrame();
+      if (!frameRO && window.ResizeObserver) frameRO = new ResizeObserver(() => { cancelAnimationFrame(frameRaf); frameRaf = requestAnimationFrame(drawFrame); }), frameRO.observe(sheetEl);
+    } else sheetEl.classList.remove('framed');
+  }
   function show(kind) {
     if (kind !== 'carp') releaseArm = null;
     lastHtml = '';
     renderPanel(kind); panel.hidden = false;
+    applyFrame();
     clearInterval(tickTimer); tickTimer = setInterval(() => { if (['gacha', 'carp', 'quests', 'upgrades', 'lab'].includes(openPanel)) renderPanel(openPanel); }, 1000);
   }
   function hide() { panel.hidden = true; openPanel = null; releaseArm = null; lastHtml = ''; clearInterval(tickTimer); }
@@ -2511,6 +2544,8 @@
       sheetCarp = null; hide();
       toast(`${spOf(c).name} vuelve al río · +${fmt(v)} perlas`, RARITY[spOf(c).r].c, 2600);
       refreshHud(); refreshInfo(); save();
+    } else if (b.dataset.det != null) {
+      gachaDet = !gachaDet; renderPanel('gacha');
     } else if (b.dataset.pull != null) {
       startPull(gachaZone, +b.dataset.pull, null);
     } else if (b.dataset.free != null) {

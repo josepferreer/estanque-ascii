@@ -224,3 +224,36 @@ button:disabled { color: var(--dim); cursor: default; opacity: .6; }
 .pulls { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin: 10px 0; }
 .pulls button { padding: 12px 14px; }
 .odds { display: grid; gap: 3px; margin-top: 6px; }
+
+/* panel del nenúfar: marco pintado por zona (frames.js) y adornos */
+#frame { display: none; position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
+#sheet.framed { overflow: hidden; padding: var(--fb, 52px); background: #07131c; border: 0; max-width: 540px; }
+#sheet.framed #frame { display: block; }
+#sheet.framed #body { overflow-y: auto; padding: 18px 14px 12px; max-height: calc(82vh - 2 * var(--fb, 52px)); scrollbar-width: thin; scrollbar-color: var(--a) #07131c; }
+#sheet.framed #close { top: 10px; right: 10px; z-index: 3; width: 30px; height: 30px; padding: 0; background: #07131c; border: 2px solid var(--a); color: #fff; font-size: 18px; line-height: 1; }
+#sheet.framed button { border: 2px solid var(--a); background: #0b1c28; color: #fff; }
+#sheet.framed button.main { background: var(--a); color: #07131c; }
+#sheet.framed button:disabled { opacity: .45; }
+#sheet.framed .zone-title { color: var(--a); }
+#sheet.framed .pulls { margin: 12px 0 8px; }
+#sheet.framed .gb { width: 100%; margin-top: 2px; }
+.ghd { display: flex; gap: 14px; align-items: center; }
+.gart { margin: 0; font: inherit; line-height: 1.05; color: var(--a); white-space: pre; font-size: 12px; }
+.gnm { font-size: 15px; color: #fff; }
+.orn { color: var(--a); letter-spacing: .12em; margin: 8px 0; white-space: nowrap; overflow: hidden; font-size: 12px; opacity: .85; }
+.orow { display: grid; grid-template-columns: 78px 1fr 46px; gap: 8px; align-items: center; margin-top: 3px; }
+.orow span:last-child { text-align: right; }
+.gbar { white-space: nowrap; overflow: hidden; letter-spacing: 0; }
+.gsp { margin: 0 0 4px; font-size: 12px; }
+.hist { margin-top: 4px; }
+.sq { display: inline-block; width: 11px; height: 11px; margin: 0 3px 3px 0; }
+.odds2 { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin-top: 6px; }
+
+/* panel del nenúfar, versión corta */
+.stack { display: flex; height: 14px; border: 1px solid #24404f; margin: 8px 0 6px; }
+.stack i { display: block; }
+.leg { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+.leg span::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 5px; background: var(--c); }
+.lbl { font-size: 12px; color: var(--dim); margin: 12px 0 2px; }
+.chip { display: inline-block; border: 1.5px solid currentColor; padding: 0 7px; font-size: 12px; margin-left: 6px; }
+#sheet.framed button.lnk, button.lnk { border: 0; background: none; color: var(--a, var(--accent)); padding: 8px 0 2px; margin-top: 6px; }
