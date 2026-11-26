@@ -66,7 +66,7 @@ const DATA = (() => {
   };
 
   // Laboratorio: se construye una vez; mezcla dos carpas adultas. Ciertas parejas dan una criatura.
-  const LAB = { cost: 20000 };
+  const LAB = { cost: 2000 };
   const RECIPES = [
     { sp: 'ryu', a: 'dragon', b: 'brasa', hint: 'una carpa de leyenda y otra que arde' },
     { sp: 'komodo', a: 'piedra', b: 'musgo', hint: 'algo duro como la roca y algo verde' },
@@ -74,17 +74,17 @@ const DATA = (() => {
 
   // Rincones secretos del mapa (en map.js, después de las seis zonas). Se encuentran, no se compran.
   const SECRETS = [
-    { id: 'gruta', name: 'Gruta escondida', water: '#46407a', shore: '#4a4058', grass: '#3b3358', species: 'eco', reward: 4800 },
-    { id: 'poza', name: 'Poza secreta', water: '#784a6e', shore: '#6b5b45', grass: '#4a6b3a', species: 'rubi', reward: 2400 },
+    { id: 'gruta', name: 'Gruta escondida', water: '#46407a', shore: '#4a4058', grass: '#3b3358', species: 'eco', reward: 600 },
+    { id: 'poza', name: 'Poza secreta', water: '#784a6e', shore: '#6b5b45', grass: '#4a6b3a', species: 'rubi', reward: 300 },
   ];
 
   // Mejoras que se compran con perlas: tres niveles cada una
   const UPGRADES = [
-    { id: 'feeder', name: 'Comedero automático', cost: [1500, 9000, 40000], desc: ['echa una bolita cada 25 s', 'cada 16 s', 'cada 10 s'] },
-    { id: 'net', name: 'Red de perlas', cost: [2000, 12000, 50000], desc: ['recoge las perlas cada 30 s', 'cada 18 s', 'cada 10 s'] },
-    { id: 'fichas', name: 'Máquina de fichas', cost: [1200, 7000, 35000], desc: ['una ficha cada 15 min y caben 6', 'cada 10 min y caben 8', 'cada 6 min y caben 10'] },
-    { id: 'cap', name: 'Estanque más hondo', cost: [3000, 15000, 60000], desc: ['+3 carpas de cupo', '+6', '+9'] },
-    { id: 'bag', name: 'Saco de comida', cost: [1000, 6000, 30000], desc: ['16 bolitas y salen antes', '20', '24'] },
+    { id: 'feeder', name: 'Comedero automático', cost: [150, 900, 4000], desc: ['echa una bolita cada 25 s', 'cada 16 s', 'cada 10 s'] },
+    { id: 'net', name: 'Red de perlas', cost: [200, 1200, 5000], desc: ['recoge las perlas cada 30 s', 'cada 18 s', 'cada 10 s'] },
+    { id: 'incub', name: 'Incubadora', cost: [120, 700, 3500], desc: ['huevos un 30 % más rápidos', 'un 50 %', 'un 70 %'] },
+    { id: 'cap', name: 'Estanque más hondo', cost: [300, 1500, 6000], desc: ['+3 carpas de cupo', '+6', '+9'] },
+    { id: 'bag', name: 'Saco de comida', cost: [100, 600, 3000], desc: ['16 bolitas y salen antes', '20', '24'] },
   ];
 
   // Encargos del día: cada día salen tres de esta lista
@@ -99,57 +99,23 @@ const DATA = (() => {
     { id: 'breed', text: 'Mezcla dos carpas en el laboratorio', n: 1 },
   ];
 
-  // cost = perlas para desbloquear · spin = precio de un giro de la ruleta de la zona ·
-  // pool = especies que pueden salir de sus huevos
-  // Los huevos ya no se compran: solo salen de la ruleta (ver WHEEL más abajo). Los precios están
-  // pensados para un giro cada ~4 min de ingreso; se ajustan jugando.
+  // cost = perlas para desbloquear · egg = precio del huevo · pool = especies que pueden salir
   const ZONES = [
-    { id: 'estanque',  name: 'Estanque',          cost: 0,      spin: 200,   bg: '#07131c', water: '#2f7fa8', shore: '#6b5b45', grass: '#3d6b3a',
+    { id: 'estanque',  name: 'Estanque',          cost: 0,     egg: 30,   bg: '#07131c', water: '#2f7fa8', shore: '#6b5b45', grass: '#3d6b3a',
       pool: ['gris', 'naranja', 'kohaku', 'shiro', 'ogon'] },
-    { id: 'nenufares', name: 'Nenúfares',         cost: 1500,   spin: 600,  bg: '#07170f', water: '#2f9a78', shore: '#5d6b3a', grass: '#3f8a3a',
+    { id: 'nenufares', name: 'Nenúfares',         cost: 120,   egg: 120,  bg: '#07170f', water: '#2f9a78', shore: '#5d6b3a', grass: '#3f8a3a',
       pool: ['musgo', 'asagi', 'sanke', 'shusui', 'kujaku'] },
-    { id: 'cascada',   name: 'Cascada',           cost: 12000,  spin: 1500,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
+    { id: 'cascada',   name: 'Cascada',           cost: 500,   egg: 300,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
       pool: ['plateada', 'benigoi', 'showa', 'platinum', 'tancho'] },
-    { id: 'cueva',     name: 'Cueva',             cost: 40000,  spin: 3000,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
+    { id: 'cueva',     name: 'Cueva',             cost: 1500,  egg: 800,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
       pool: ['ciega', 'cristal', 'brasa', 'fantasma', 'abisal'] },
-    { id: 'luna',      name: 'Lago de la Luna',   cost: 100000, spin: 5500,  bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
+    { id: 'luna',      name: 'Lago de la Luna',   cost: 4000,  egg: 2000, bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
       pool: ['rocio', 'lunar', 'kumonryu', 'medianoche', 'lunallena'] },
-    { id: 'templo',    name: 'Templo sumergido',  cost: 250000, spin: 9000,  bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
+    { id: 'templo',    name: 'Templo sumergido',  cost: 10000, egg: 5000, bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
       pool: ['piedra', 'jade', 'ambar', 'dragon', 'celestial'] },
-    { id: 'portal',    name: 'Portal',            cost: 600000, spin: 15000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
+    { id: 'portal',    name: 'Portal',            cost: 25000, egg: 8000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
       pool: ['ceniza', 'magma', 'escarcha', 'hielo', 'nebulosa', 'estelar', 'estatica', 'glitch'] },
   ];
-
-  // ── Ruleta ──
-  // Tipos de huevo: min = rareza mínima de la carpa que sale · mult = lo que vale, en veces el precio del giro
-  const TIERS = {
-    barro:   { name: 'huevo de barro',   min: 0, mult: 1,   color: '#b39671' },
-    plata:   { name: 'huevo de plata',   min: 1, mult: 1.8, color: '#cdd8e0' },
-    oro:     { name: 'huevo de oro',     min: 2, mult: 3.5, color: '#ffd23f' },
-    cristal: { name: 'huevo de cristal', min: 3, mult: 9,   color: '#7fe8ff' },
-    mitico:  { name: 'huevo mítico',     min: 4, mult: 30,  color: '#ff4d8d' },
-  };
-  // Probabilidades por giro (suman 1). Calibradas con la garantía incluida: de cada 100 perlas gastadas
-  // vuelven ~85 en valor (consuelo 0,15×, perlas ×½/×2/×10, y cada huevo vale `mult` × el precio del giro).
-  // Un huevo de una zona cuya reserva no llega a esa rareza se cambia por un bote de perlas del mismo valor.
-  const WHEEL = {
-    pity: { oro: 40, mitico: 300 },            // garantía: huevo de oro o mejor cada 40 giros, mítico cada 300
-    consuelo: 0.15,
-    maxFichas: 5, fichaEvery: 20 * 60,         // las fichas: una cada 20 min, caben 5 (la máquina de fichas mejora ambas)
-    daily: 2,                                  // fichas de regalo al entrar cada día
-    outcomes: [
-      { id: 'migajas',  label: 'migajas',     p: 0.55156, color: '#3a4350' },
-      { id: 'perlas05', label: 'perlas ×½',   p: 0.1096,  color: '#2f6f9a', mult: 0.5 },
-      { id: 'perlas2',  label: 'perlas ×2',   p: 0.03224, color: '#3f9a52', mult: 2 },
-      { id: 'perlas10', label: 'perlas ×10',  p: 0.00387, color: '#7bdc6a', mult: 10 },
-      { id: 'barro',    label: 'barro',       p: 0.14184, color: '#8a6d4a', egg: 'barro' },
-      { id: 'plata',    label: 'plata',       p: 0.07737, color: '#aab6c0', egg: 'plata' },
-      { id: 'oro',      label: 'oro',         p: 0.02708, color: '#e0b020', egg: 'oro' },
-      { id: 'cristal',  label: 'cristal',     p: 0.0058,  color: '#4cc9f0', egg: 'cristal' },
-      { id: 'mitico',   label: 'mítico',      p: 0.00064, color: '#ff4d8d', egg: 'mitico' },
-      { id: 'libre',    label: 'giro gratis', p: 0.05,    color: '#f2f2f2' },
-    ],
-  };
 
   // El portal conecta cada día con un mundo distinto, y solo trae las carpas de ese mundo.
   // Se abre la primera media hora de cada hora par (las 0:00, las 2:00, las 4:00...).
@@ -160,5 +126,5 @@ const DATA = (() => {
     { id: 'roto', name: 'Mundo roto', color: '#00ff9c', pool: ['estatica', 'glitch'] },
   ];
 
-  return { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS, TIERS, WHEEL };
+  return { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS };
 })();

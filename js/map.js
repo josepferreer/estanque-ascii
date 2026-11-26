@@ -19,9 +19,7 @@ const MAP = (() => {
   const PW = 11;                                     // medio ancho de los pasadizos secretos
 
   const DEF = [
-    // el lago de partida, ×1,4 respecto al dibujo original (125×95): con el islote del laboratorio y la Plaza le quedaba
-    // un tercio menos de agua libre y era la zona más pequeña de todas. Sigue tocando a las mismas vecinas.
-    { id: 'estanque', p: [340, 240], rx: 175, ry: 133, s: 1 },
+    { id: 'estanque', p: [340, 240], rx: 125, ry: 95, s: 1 },
     { id: 'nenufares', p: [150, 295], rx: 125, ry: 95, s: 2 },
     { id: 'cascada', p: [330, 90], rx: 125, ry: 72, s: 3 },
     { id: 'cueva', p: [540, 185], rx: 112, ry: 92, s: 4 },
@@ -46,9 +44,7 @@ const MAP = (() => {
 
   // islotes (coordenadas de mundo): tierra dentro, orilla estrecha y un anillo de aguas someras
   const ISLANDS = [
-    [{ x: -38, y: 18, r: 26, lab: true },          // el islote del laboratorio: grande, para que la casa quepa a escala de las carpas
-      // la Plaza: un muelle de tablas sobre pilotes (rectángulo w×h) pegado al laboratorio. Las carpas no pasan por debajo
-      { x: 34, y: 16, w: 72, h: 48, r: 44, pier: true }],
+    [{ x: -38, y: 18, r: 26, lab: true }],         // el islote del laboratorio: grande, para que la casa quepa a escala de las carpas
     [{ x: -182, y: 66, r: 8, turtle: true }, { x: -118, y: 18, r: 5 }],
     // cascada: dos peñascos en la poza donde cae el agua
     [{ x: -20, y: -155, r: 2.6, boulder: true }, { x: 6, y: -153, r: 2.2, boulder: true }],
@@ -119,8 +115,6 @@ const MAP = (() => {
     let r = 1 - e / RS;
     for (const is of ISLANDS[z1]) {
       const dx = x - is.x, dy = y - is.y;
-      // un muelle bloquea el paso (r 0,95: ni se nada ni se echa comida) pero el agua de debajo no se convierte en playa
-      if (is.pier) { if (Math.abs(dx) <= is.w / 2 && Math.abs(dy) <= is.h / 2 && r < 0.95) r = 0.95; continue; }
       // columnas y templo salen del agua a pico: sin playa alrededor, solo bloquean el paso (r 0,9)
       if (is.col || is.temple) {
         const h = is.temple ? 17.5 : is.r * 1.6;

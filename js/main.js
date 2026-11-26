@@ -15,7 +15,7 @@
  * ?rapido (los visitantes, la garza y la lluvia llegan enseguida).
  */
 (() => {
-  const { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS, TIERS, WHEEL } = DATA;
+  const { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS } = DATA;
   const NZ = MAP.N, MAIN = MAP.MAIN;                 // 9 zonas en el mapa: las 7 que se compran y 2 secretas
   const ZINFO = [...ZONES, ...SECRETS];             // colores y nombre de cada zona del mapa, en el mismo orden
 
@@ -24,7 +24,6 @@
   const DEMO = PARAMS.get('demo');                   // null = partida normal
   const HOUR = PARAMS.has('hora') ? +PARAMS.get('hora') : null;
   const FAST = PARAMS.has('rapido');
-  const NOGL = PARAMS.has('2d');                      // fuerza el camino 2D sin WebGL (para probarlo)
   const MAX_CELLS = 26000;               // tope de celdas (limita el coste por fotograma)
   const MIN_CELL = 5;                    // tamaño mínimo de celda en píxeles CSS
   const CAP = 6;                         // carpas que caben por cada zona abierta (el cupo es global)
@@ -64,7 +63,7 @@
   const freshUp = () => Object.fromEntries(UPGRADES.map((u) => [u.id, 0]));
   function fresh() {
     return {
-      perlas: 400, food: 12, foodT: 0,
+      perlas: 40, food: 12, foodT: 0,
       unlocked: ZONES.map((_, i) => i === 0),
       // dos carpas de salida: con una sola el principio se hace muy lento
       carps: [{ sp: 'gris', hunger: 80, xp: 0, x: 0, y: 0, pt: 4 }, { sp: 'naranja', hunger: 80, xp: 0, x: 8, y: -6, pt: 9 }],
@@ -118,10 +117,6 @@
   S.up = { ...freshUp(), ...(S.up || {}) };
   if (S.sound === undefined) S.sound = true;
   S.lab = S.lab || { built: false };
-  // ruleta: fichas, giros gratis, huevos sin abrir y garantía por zona (partidas anteriores empiezan con 3 fichas)
-  S.inv = S.inv || []; S.pity = S.pity || {}; S.freeSpins = S.freeSpins || 0;
-  if (S.fichas == null) S.fichas = 3;
-  S.fichaT = S.fichaT || 0; S.daily = S.daily || '';
   SOUND.set(S.sound);
 
   // ───────────────────────── zonas, agua y rutas ─────────────────────────
@@ -171,11 +166,7 @@
   const foodMax = () => 12 + 4 * lvl('bag');
   let raining = false;
   const foodEvery = () => [5, 4.2, 3.5, 2.8][lvl('bag')] * (raining ? 0.5 : 1);
-  // incubación: solo la usan el laboratorio y los huevos de partidas antiguas (los de la ruleta se abren al momento)
-  const EGG_TIME = (z) => (DEMO !== null ? 3 : 20 * (Math.min(z, ZONES.length - 1) + 1));
-  // fichas de la ruleta: una cada rato, hasta un máximo; la máquina de fichas lo mejora
-  const maxFichas = () => [WHEEL.maxFichas, 6, 8, 10][lvl('fichas')];
-  const fichaEvery = () => [WHEEL.fichaEvery, 15 * 60, 10 * 60, 6 * 60][lvl('fichas')];
+  const EGG_TIME = (z) => (DEMO !== null ? 3 : 20 * (Math.min(z, ZONES.length - 1) + 1)) * [1, 0.7, 0.5, 0.3][lvl('incub')];
 
   // ───────────────────────── portal ─────────────────────────
   // Abierto la primera media hora de cada hora par; cada día da a un mundo distinto.
@@ -217,25 +208,19 @@
 
   // el tiempo que no estuviste (hasta 4 h): el hambre baja a medio ritmo y nunca por debajo de 15.
   // Las carpas siguen soltando perlas: a ritmo normal mientras están comidas y a un cuarto después.
-  // Sirve igual para cuando cargas la página que para cuando vuelves a una pestaña que estuvo oculta.
-  function applyAway(secs) {
-    let got = 0;
-    S.carps.forEach((c) => {
-      const rate = HUNGER_RATE * 0.5, fed = c.hunger > 30 ? Math.min(secs, (c.hunger - 30) / rate) : 0;
-      got += Math.floor((fed + (secs - fed) * AWAY_RATE) / PERLA_EVERY) * perlaValue(c);
-      c.hunger = Math.max(Math.min(c.hunger, 15), c.hunger - secs * rate);
-    });
-    S.perlas += got;
-    S.food = Math.min(foodMax(), S.food + Math.floor(secs / foodEvery()));
-    S.fichas = Math.max(S.fichas, Math.min(maxFichas(), S.fichas + Math.floor(secs / fichaEvery())));   // el regalo diario puede pasar del máximo
-    return got;
-  }
   const AWAY = clamp((Date.now() - (S.seen || Date.now())) / 1000, 0, 4 * 3600);
-  const offline = applyAway(AWAY);
+  let offline = 0;
+  S.carps.forEach((c) => {
+    const rate = HUNGER_RATE * 0.5, fed = c.hunger > 30 ? Math.min(AWAY, (c.hunger - 30) / rate) : 0;
+    offline += Math.floor((fed + (AWAY - fed) * AWAY_RATE) / PERLA_EVERY) * perlaValue(c);
+    c.hunger = Math.max(Math.min(c.hunger, 15), c.hunger - AWAY * rate);
+  });
+  S.perlas += offline;
+  S.food = Math.min(foodMax(), S.food + Math.floor(AWAY / foodEvery()));
 
   // soltar una carpa al río: devuelve parte de lo que costó su huevo, más cuanto más grande y rara
   const zoneOfSpecies = (c) => (c.hy ? c.hy.z : SPECIES[c.sp] && SPECIES[c.sp].lab ? 5 : Math.max(0, ZONES.findIndex((z) => z.pool.includes(c.sp))));
-  const releaseValue = (c) => Math.max(1, Math.round(ZONES[Math.min(ZONES.length - 1, zoneOfSpecies(c))].spin * (0.2 + 0.1 * stageOf(c.xp)) * Math.sqrt(RARITY[spOf(c).r].mult)));
+  const releaseValue = (c) => Math.max(1, Math.round(ZONES[Math.min(ZONES.length - 1, zoneOfSpecies(c))].egg * (0.2 + 0.1 * stageOf(c.xp)) * Math.sqrt(RARITY[spOf(c).r].mult)));
 
   // ───────────────────────── mundo ─────────────────────────
   let t = 0;                 // segundos de juego
@@ -599,7 +584,6 @@
     L.shore.forEach((s) => rock(s.x, s.y, s.r, s.tone, stone));
     if (!cave) L.bushes.forEach((o) => { const s = Math.sin(t * 1.1 + o.p) * 0.12; tree(o.x, o.y, o.r, cols, s); });
     if (id === 'estanque') reeds(zi);
-    if (zi < MAIN && zi !== 0) drawMachine(zi);                                   // el puesto de la ruleta de la zona
     L.trees.forEach((o) => {
       if (cave) rock(o.x, o.y, o.r * 0.8, o.tone, stone);
       else if (id === 'templo') {                                   // bloques de ruinas
@@ -609,7 +593,6 @@
       } else tree(o.x, o.y, o.r, cols, Math.sin(t * 0.8 + o.p) * 0.3);
     });
     MAP.ISLANDS[zi].forEach((is, i) => {
-      if (is.pier) { drawPlaza(is); drawMachine(0); return; }
       if (id === 'estanque' && i === 0) { drawLab(is, cols); return; }
       if (is.temple) { drawTemple(is); return; }
       if (is.col) { drawColumn(is, i); return; }
@@ -1132,9 +1115,7 @@
       const a = Math.floor(key / NZ), b = key % NZ;
       if (a >= MAIN || b >= MAIN) return;                       // los secretos no tienen barrera: se encuentran
       const oa = isOpen(a), ob = isOpen(b);
-      // toda frontera entre una zona abierta y otra cerrada lleva barricada (no solo la de la zona siguiente):
-      // las carpas no pueden pasar, así que se ve por qué y no parece una pared invisible
-      if (oa !== ob) { drawBorderBarrier(key, 0); return; }
+      if (oa !== ob) { if (status(oa ? b : a) === 1) drawBorderBarrier(key, 0); return; }
       if (!breakT.has(key)) return;
       const prog = (t - breakT.get(key)) / BREAK_TIME;
       if (prog >= 1) breakT.delete(key); else drawBorderBarrier(key, prog);
@@ -1142,7 +1123,7 @@
   }
 
   // ───────────────────────── tesoros y secretos ─────────────────────────
-  const TREASURE_REWARD = [640, 1280, 2080, 3360, 5600, 8800];
+  const TREASURE_REWARD = [80, 160, 260, 420, 700, 1100];
   const TREASURE_TEXT = {
     cofre: 'un cofre lleno de perlas',
     tortuga: 'la tortuga mira hacia el sur, hacia unas cañas',
@@ -1251,7 +1232,7 @@
   function shooHeron() {
     if (!heron || heron.state === 'out') return;
     heron.state = 'out'; heron.t0 = t; heron.fx = heron.x * 2 - heron.fx; heron.fy = heron.y * 2 - heron.fy;
-    const v = 120 * openMain();
+    const v = 15 * openMain();
     S.perlas += v; toast(`garza espantada · +${v} perlas`, '#e8e8e8', 1600);
     SOUND.shoo(); quest('heron'); refreshHud();
   }
@@ -1658,14 +1639,8 @@
       S.hybrids[e.hy.name] = { n: (rec ? rec.n : 0) + 1, pat: e.hy.pat, r: e.hy.r, rainbow: e.hy.rainbow, head: e.hy.head };
       sp = e.hy;
     } else {
-      const night = light.night;
-      let pool = poolFor(e.zone, e.world);
-      // el tipo de huevo fija la rareza mínima; si la reserva de la zona no llega, sale lo mejor que haya
-      if (e.tier) {
-        const min = TIERS[e.tier].min; let f = pool.filter((id) => SPECIES[id].r >= min);
-        if (!f.length) { const best = rarityMax(pool); f = pool.filter((id) => SPECIES[id].r === best); }
-        pool = f;
-      }
+      const zone = ZONES[e.zone], night = light.night, wd = e.world && WORLDS.find((w) => w.id === e.world);
+      const pool = wd ? wd.pool : zone.pool;
       // de noche salen más raras
       const wOf = (id) => RARITY[SPECIES[id].r].w * (SPECIES[id].r >= 2 ? 1 + night * 1.2 : 1);
       const total = pool.reduce((a, id) => a + wOf(id), 0);
@@ -1678,11 +1653,9 @@
       sp = SPECIES[id];
     }
     S.carps.push(c);
-    if (e.reveal) reveal = { sp, isNew };            // los huevos de la ruleta se enseñan en su propia pantalla
-    else toast(`${isNew ? 'nueva · ' : ''}${sp.name} (${RARITY[sp.r].n})`, RARITY[sp.r].c, 3200);
+    toast(`${isNew ? 'nueva · ' : ''}${sp.name} (${RARITY[sp.r].n})`, RARITY[sp.r].c, 3200);
     ripple(c.x, c.y, false); SOUND.hatch(); quest('hatch');
     refreshHud();
-    return c;
   }
 
   // ── cría: dos carpas adultas ponen un huevo que mezcla sus colores ──
@@ -1716,7 +1689,7 @@
   // ── laboratorio: mezcla dos carpas adultas; ciertas parejas dan una criatura en vez de una cría ──
   const recipeOf = (a, b) => (a.hy || b.hy ? null : RECIPES.find((r) => (r.a === a.sp && r.b === b.sp) || (r.a === b.sp && r.b === a.sp)) || null);
   const labZone = (a, b) => (recipeOf(a, b) ? 5 : Math.min(5, Math.max(zoneOfSpecies(a), zoneOfSpecies(b))));
-  const labCost = (a, b) => ZONES[labZone(a, b)].spin * 2;           // una mezcla cuesta dos giros de la zona
+  const labCost = (a, b) => ZONES[labZone(a, b)].egg;
   const labBusy = () => S.eggs.some((e) => e.lab);
   const canMix = (c) => S.carps.includes(c) && stageOf(c.xp) >= 2 && !(c.bt > Date.now());
   function labMix(a, b) {
@@ -1734,7 +1707,7 @@
 
   // ── encargos del día ──
   const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
-  const questReward = () => Math.round(320 * Math.pow(openMain(), 1.5) + 160);
+  const questReward = () => Math.round(40 * Math.pow(openMain(), 1.6) + 20);
   function ensureQuests() {
     const day = todayKey();
     if (S.quests && S.quests.day === day) return;
@@ -1756,311 +1729,11 @@
     refreshNav();
   }
 
-  // ───────────────────────── ruleta ─────────────────────────
-  // Los huevos solo salen de aquí. Se gira con perlas, con una ficha (se recargan solas) o con un giro gratis.
-  // El resultado se decide y se cobra al empezar a girar: la animación solo lo enseña (recargar la página
-  // a mitad de giro no lo cancela). Hay una garantía por zona: oro o mejor cada N giros y un mítico cada M.
-  const GOOD = ['oro', 'cristal', 'mitico'];
-  const EGG_LEVEL = { barro: 1, plata: 2, oro: 3, cristal: 4, mitico: 5 };
-  const MACHINE_R = 5.8;                               // radio de la rueda de una máquina, en unidades de mundo
-  let wheelRot = 0, wheelBusy = false, wheelMsg = null, reveal = null, spinHold = null, spinZone = 0;
-  let mesa = null;                                     // la ruleta abierta en el mapa: { zi, view: 'giro' | 'probs' | 'huevos', page }
-  let banner = null;                                   // el cartel de «carpa nueva» que sale al abrir un huevo
-  let fx = [];                                         // chispas de premio
-  const rarityMax = (pool) => Math.max(...pool.map((id) => SPECIES[id].r));
-  const poolFor = (zi, world) => { const wd = world && WORLDS.find((w) => w.id === world); return wd ? wd.pool : ZONES[zi].pool; };
-  const worldNow = (zi) => (zi === PORTAL ? worldToday().id : undefined);
-  const spinCost = (zi) => ZONES[zi].spin;
-  const eggSale = (it) => Math.round(TIERS[it.tier].mult * spinCost(it.zone) * 0.6);
-  // ¿existe ese huevo en esta zona? Si su reserva no llega a la rareza, el premio es un bote de perlas del mismo valor
-  const eggExists = (zi, tier) => TIERS[tier].min <= rarityMax(poolFor(zi, worldNow(zi)));
-
-  function rollOutcome(zi) {
-    const P = S.pity[zi] || (S.pity[zi] = { o: 0, m: 0 }), by = (id) => WHEEL.outcomes.find((o) => o.id === id);
-    let r = Math.random(), res = WHEEL.outcomes[0];
-    for (const o of WHEEL.outcomes) { r -= o.p; if (r < 0) { res = o; break; } }
-    P.o++; P.m++;
-    if (P.m >= WHEEL.pity.mitico) res = by('mitico');
-    else if (P.o >= WHEEL.pity.oro && !GOOD.includes(res.id)) res = by('oro');       // también pisa un "giro gratis": la garantía es firme
-    if (GOOD.includes(res.id)) P.o = 0;
-    if (res.id === 'mitico') P.m = 0;
-    return res;
-  }
-  // cobra el premio y devuelve lo que hay que contar al jugador
-  function applyOutcome(zi, res) {
-    const cost = spinCost(zi), tier = res.egg;
-    if (res.id === 'migajas') { const v = Math.round(cost * WHEEL.consuelo); S.perlas += v; return { text: `migajas · +${fmt(v)} perlas`, color: '#8d99a6', level: 0 }; }
-    if (res.mult) { const v = Math.round(cost * res.mult); S.perlas += v; return { text: `${res.label} · +${fmt(v)} perlas`, color: res.color, level: res.mult >= 10 ? 4 : res.mult >= 2 ? 2 : 1 }; }
-    if (res.id === 'libre') { S.freeSpins++; return { text: 'giro gratis', color: '#f2f2f2', level: 2 }; }
-    if (!eggExists(zi, tier)) { const v = Math.round(cost * TIERS[tier].mult); S.perlas += v; return { text: `bote de perlas · +${fmt(v)}`, color: TIERS[tier].color, level: EGG_LEVEL[tier] }; }
-    S.inv.push({ tier, zone: zi, world: worldNow(zi) });
-    return { text: TIERS[tier].name, color: TIERS[tier].color, level: EGG_LEVEL[tier] };
-  }
-  function startSpin(zi, mode) {
-    if (wheelBusy || !S.unlocked[zi]) return;
-    if (zi === PORTAL && !portalOpen()) { toast(`el portal abre a las ${portalNext()}`, '#b8a4ff', 2200); return; }
-    const cost = spinCost(zi);
-    if (mode === 'libre') { if (S.freeSpins < 1) return; S.freeSpins--; }
-    else if (mode === 'ficha') { if (S.fichas < 1) return; S.fichas--; }
-    else { if (S.perlas < cost) return; S.perlas -= cost; }
-    wheelBusy = true; wheelMsg = null; spinZone = zi;
-    const p0 = S.perlas, i0 = S.inv.length, f0 = S.freeSpins;
-    const res = rollOutcome(zi), info = applyOutcome(zi, res);
-    // el premio ya está cobrado, pero no se ve en el marcador ni en la mesa hasta que la rueda se para
-    spinHold = { gain: S.perlas - p0, egg: S.inv.length > i0, libre: S.freeSpins > f0 };
-    save(); refreshHud();
-    animateWheel(res, info);
-  }
-  // un toque en la rueda o en la palanca: gira con lo que haya (giro gratis, ficha o perlas)
-  function quickSpin(zi) {
-    const mode = S.freeSpins > 0 ? 'libre' : S.fichas >= 1 ? 'ficha' : 'perlas';
-    if (mode === 'perlas' && S.perlas < spinCost(zi)) { toast(`sin fichas: faltan ${fmt(spinCost(zi) - S.perlas)} perlas para girar`, '#ffb703', 1800); return; }
-    startSpin(zi, mode);
-  }
-
-  // sectores de la rueda: cada premio se reparte en varios sectores intercalados, de ancho proporcional a su
-  // probabilidad (con un mínimo de 1,5° para que el jackpot se pueda ver). a0 = ángulo de inicio desde arriba, en grados
-  let slicesCache = null;
-  function wheelSlices() {
-    if (slicesCache) return slicesCache;
-    const outs = WHEEL.outcomes, subs = [];
-    outs.forEach((o, oi) => { const n = clamp(Math.round(o.p * 24), 1, 12); for (let k = 0; k < n; k++) subs.push({ o, oi, k, w: o.p / n }); });
-    subs.sort((a, b) => a.k - b.k || a.oi - b.oi);
-    const raw = subs.map((s) => Math.max(1.5, s.w * 360)), tot = raw.reduce((a, b) => a + b, 0);
-    let a = 0;
-    subs.forEach((s, i) => { s.da = raw[i] / tot * 360; s.a0 = a; a += s.da; });
-    return (slicesCache = subs);
-  }
-  function animateWheel(res, info) {
-    const slices = wheelSlices(), cands = slices.filter((s) => s.o.id === res.id), pick = cands[Math.floor(Math.random() * cands.length)];
-    const mid = pick.a0 + pick.da * (0.5 + (Math.random() - 0.5) * 0.7), from = wheelRot;
-    const extra = 360 * 5 + ((((-mid - from) % 360) + 360) % 360), dur = 4600, t0 = performance.now();
-    let lastIdx = -1;
-    const step = (now) => {
-      const k = clamp((now - t0) / dur, 0, 1), e = 1 - Math.pow(1 - k, 4);
-      wheelRot = from + extra * e;                    // la máquina del mapa se pinta con este ángulo
-      const under = (((-wheelRot) % 360) + 360) % 360, idx = slices.findIndex((s) => under >= s.a0 && under < s.a0 + s.da);
-      if (idx !== lastIdx) { if (lastIdx !== -1) SOUND.tick(); lastIdx = idx; }
-      if (k < 1) { requestAnimationFrame(step); return; }
-      wheelBusy = false; wheelMsg = info; spinHold = null; refreshHud(); SOUND.win(info.level);
-      const m = machineOf(spinZone);
-      if (info.level >= 2) burst(m.x, m.y - 2, info.color, 8 * info.level);
-      if (info.level >= 4) toast(info.text, info.color, 3500);
-    };
-    requestAnimationFrame(step);
-  }
-  const oddsLabel = (zi, o) => (o.egg ? (eggExists(zi, o.egg) ? TIERS[o.egg].name : 'bote de perlas ' + TIERS[o.egg].mult + '×') : o.label);
-
-  // ── la mesa: la ruleta se abre en el propio mapa. La cámara se acerca a la máquina, la rueda crece y lo demás es texto ──
-  const mesaZoom = () => clamp(Math.min(0.42 * H / 16.2, 0.8 * W / 15), 8, ZOOM_MAX);
-  function machineOf(zi) {
-    if (zi === 0) { const pier = MAP.ISLANDS[0].find((is) => is.pier); return { x: 26 + (pier ? pier.x - 34 : 0), y: 28 + (pier ? pier.y - 16 : 0), k: 1 }; }
-    const s = stallOf(zi); return { x: s.x, y: s.y, k: 0.85 };
-  }
-  function enterMesa(zi, view) {
-    if (!S.unlocked[zi]) return;
-    mesa = { zi, view: view || 'giro', page: 0 };
-    if (!wheelBusy || spinZone !== zi) wheelMsg = null;
-    const m = machineOf(zi), z = mesaZoom(), top = (TL.cols < 54 ? 9 : 7) * (TL.th / dpr) + MACHINE_R * m.k * z;   // la rueda queda bajo el título y las pestañas
-    selected = null; refreshInfo();
-    flyTo(m.x, m.y - (top - H / 2) / z, z);
-  }
-  function exitMesa() { if (!mesa) return; const m = machineOf(mesa.zi); mesa = null; flyTo(m.x, m.y, defaultZoom()); }
-  function mesaStep(dir) {
-    const open = []; for (let i = 0; i < MAIN; i++) if (S.unlocked[i]) open.push(i);
-    enterMesa(open[(open.indexOf(mesa.zi) + dir + open.length) % open.length], mesa.view);
-  }
-  function burst(x, y, col, n) {
-    for (let i = 0; i < n && fx.length < 160; i++) { const a = Math.random() * 6.283, v = rnd(5, 20); fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 5, life: rnd(0.9, 1.7), t0: t, col }); }
-  }
-  function drawFx() {
-    fx.forEach((f) => { g.globalAlpha = clamp(1 - (t - f.t0) / f.life, 0, 1); g.fillStyle = f.col; g.fillRect(f.x, f.y, 1, 1); });
-    g.globalAlpha = 1;
-  }
-
-  function openEgg(i) {
-    const it = S.inv[i]; if (!it) return;
-    if (S.carps.length >= capacity()) { toast('no caben más carpas: suelta una o cambia el huevo por perlas', '#ffb703', 2800); return; }
-    S.inv.splice(i, 1);
-    const c = hatch({ zone: it.zone, world: it.world, tier: it.tier, reveal: true }), rv = reveal; reveal = null;
-    save();
-    // la carpa sale al agua: se cierra la mesa, la cámara va a ella y un cartel dice qué ha salido
-    mesa = null; selected = c; refreshInfo();
-    flyTo(c.x, c.y, 11);
-    const sp = spOf(c), col = RARITY[sp.r].c;
-    burst(c.x, c.y, col, 16 + 8 * sp.r);
-    banner = { until: t + 7, color: [...hex(col), 255], lines: [rv && rv.isNew ? '¡NUEVA EN EL ÁLBUM!' : 'OTRA MÁS PARA EL ESTANQUE', sp.name.toUpperCase(), RARITY[sp.r].n.toUpperCase() + ' · ' + ZONES[it.zone].name.toUpperCase()] };
-    SOUND.win(Math.min(5, sp.r + 1));
-  }
-  function sellEgg(i) {
-    const it = S.inv[i]; if (!it) return;
-    const v = eggSale(it); S.inv.splice(i, 1); S.perlas += v;
-    toast(`+${fmt(v)} perlas`, '#fff1a8', 1200); SOUND.coins(3); refreshHud(); save();
-  }
-    // regalo diario de fichas
-  function claimDaily() {
-    if (DEMO !== null) return;
-    const day = todayKey();
-    if (S.daily === day) return;
-    S.daily = day; S.fichas += WHEEL.daily;
-    toast(`regalo del día · +${WHEEL.daily} fichas`, '#9be7a0', 3500); save();
-  }
-
-  // puesto de la ruleta de cada zona: una caseta con toldo en la orilla (se toca para abrir su rueda)
-  const stallCache = {};
-  function stallOf(zi) {
-    if (stallCache[zi]) return stallCache[zi];
-    const z = MAP.Z[zi]; let pos = null;
-    for (let k = 0; k < 16 && !pos; k++) {
-      const p = MAP.shorePoint(zi, 0.9 + k * 0.4, 0.97); if (!p) continue;
-      // 10 unidades hacia fuera de la orilla: la playa es ancha y menos que eso se queda en el agua poco profunda
-      const dx = p[0] - z.x, dy = p[1] - z.y, l = Math.hypot(dx, dy) || 1, x = p[0] + dx / l * 10, y = p[1] + dy / l * 10, q = MAP.sample(x, y);
-      if (q.z === zi && q.r > 1.12 && !MAP.ISLANDS[zi].some((is) => Math.hypot(x - is.x, y - is.y) < is.r + 9)) pos = { x, y };
-    }
-    if (!pos) {              // ningún rayo desde el centro llega a tierra de la zona: se busca por toda ella la tierra más cercana al agua
-      const b = MAP.bbox(zi); let best = 1e9;
-      for (let y = b[1]; y < b[3]; y += 3) for (let x = b[0]; x < b[2]; x += 3) {
-        const q = MAP.sample(x, y);
-        if (q.z !== zi || q.r < 1.12 || q.r > 1.35 || MAP.ISLANDS[zi].some((is) => Math.hypot(x - is.x, y - is.y) < is.r + 9)) continue;
-        const d = Math.hypot(x - z.x, y - z.y);
-        if (d < best) { best = d; pos = { x, y }; }
-      }
-    }
-    return (stallCache[zi] = pos || { x: z.x, y: z.y - z.ry * 0.9, fallback: true });
-  }
-  // la máquina de ruleta: la de la Plaza y una en la orilla de cada zona abierta. Su rueda gira de verdad cuando se gira
-  function drawMachine(zi) {
-    const m = machineOf(zi), r = MACHINE_R, spinning = wheelBusy && spinZone === zi, N = light.night;
-    g.save(); g.translate(m.x, m.y); g.scale(m.k, m.k);
-    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(-6.3, -11.2, 15, 22.9);
-    g.fillStyle = '#5b4429'; g.fillRect(-7.5, -12.5, 15, 22.9); g.fillStyle = '#7a5a38'; g.fillRect(-7.5, -12.5, 15, 1.2);
-    wheelDisc(0, 0, r, spinning ? wheelRot * Math.PI / 180 : t * 0.35);
-    g.fillStyle = '#fff'; g.beginPath(); g.moveTo(-1.4, -r - 2.2); g.lineTo(1.4, -r - 2.2); g.lineTo(0, -r - 0.2); g.closePath(); g.fill();
-    const lv = spinning ? 2.4 : Math.sin(t * 0.9) * 0.6;                                      // la palanca baja mientras gira
-    g.strokeStyle = '#c9c9c9'; g.lineWidth = 0.7; g.beginPath(); g.moveTo(8.6, 1); g.lineTo(8.6, -4.5 + lv); g.stroke();
-    g.fillStyle = '#e63946'; g.beginPath(); g.arc(8.6, -5 + lv, 1.3, 0, 7); g.fill();
-    g.fillStyle = '#3a2a1a'; g.fillRect(-5.5, r + 1.4, 11, 2.6);                              // bandeja: los últimos huevos de esta zona
-    S.inv.filter((it) => it.zone === zi).slice(-3).forEach((it, k) => { g.fillStyle = TIERS[it.tier].color; g.beginPath(); g.ellipse(-3 + k * 3, r + 2.7, 1, 1.25, 0, 0, 7); g.fill(); });
-    g.restore();
-    glow(m.x, m.y - 2, 12 * m.k, 'rgba(255,210,120,A)', 0.08 + 0.2 * N + (spinning ? 0.12 : 0));
-  }
-
-  // ── La Plaza: el muelle de tablas junto al laboratorio (obstáculo real en map.js). Cada edificio abre su pantalla al tocarlo ──
-  function wheelDisc(cx, cy, r, rot) {
-    g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.arc(cx + 0.8, cy + 1, r + 0.6, 0, 7); g.fill();
-    g.fillStyle = '#e8e8e8'; g.beginPath(); g.arc(cx, cy, r + 0.55, 0, 7); g.fill();
-    wheelSlices().forEach((s) => { g.fillStyle = s.o.color; g.beginPath(); g.moveTo(cx, cy); g.arc(cx, cy, r, (s.a0 - 90) * Math.PI / 180 + rot, (s.a0 + s.da - 90) * Math.PI / 180 + rot); g.closePath(); g.fill(); });
-    g.fillStyle = '#0b0b0b'; g.beginPath(); g.arc(cx, cy, r * 0.16, 0, 7); g.fill();
-  }
-  function lamp(x, y, N) {
-    g.fillStyle = '#3a2816'; g.beginPath(); g.arc(x, y, 0.7, 0, 7); g.fill();
-    g.fillStyle = '#ffd98a'; g.beginPath(); g.arc(x, y - 1.2, 0.8, 0, 7); g.fill();
-    glow(x, y - 1.2, 14, 'rgba(255,200,110,A)', 0.14 + 0.34 * N);
-  }
-  function drawPlaza(is) {
-    g.save(); g.translate(is.x - 34, is.y - 16);              // las coordenadas de abajo son las del muelle colocado en (34, 16)
-    const X0 = -2, Y0 = -8, X1 = 70, Y1 = 40, N = light.night;
-    // sombra sobre el agua, puente desde el islote del laboratorio y cubierta de tablones
-    g.fillStyle = 'rgba(0,0,0,0.34)'; g.fillRect(X0 + 1.8, Y0 + 2.4, X1 - X0, Y1 - Y0);
-    for (let x = -17, k = 0; x < X0; x += 1.4, k++) { g.fillStyle = k % 2 ? '#8a6a44' : '#7d5f3c'; g.fillRect(x, 10.6, 1.3, 6.4); }
-    g.fillStyle = '#4a3420'; g.fillRect(-17, 10.2, X0 + 17, 0.6); g.fillRect(-17, 17, X0 + 17, 0.6);
-    for (let y = Y0, k = 0; y < Y1; y += 1.5, k++) { g.fillStyle = k % 2 ? '#8a6a44' : '#7e603d'; g.fillRect(X0, y, X1 - X0, 1.4); }
-    g.fillStyle = 'rgba(0,0,0,0.22)';
-    for (let y = Y0, k = 0; y < Y1; y += 1.5, k++) for (let x = X0 + ((k * 7) % 9); x < X1; x += 9) g.fillRect(x, y, 0.3, 1.4);
-    g.fillStyle = '#4a3420'; g.fillRect(X0 - 1, Y0 - 1, X1 - X0 + 2, 1); g.fillRect(X0 - 1, Y1, X1 - X0 + 2, 1); g.fillRect(X0 - 1, Y0, 1, Y1 - Y0); g.fillRect(X1, Y0, 1, Y1 - Y0);
-    for (let x = X0; x <= X1; x += 8) { g.fillStyle = '#2f200f'; g.beginPath(); g.arc(x, Y1 + 0.6, 1.1, 0, 7); g.fill(); }
-
-    // ── CASINO: tejado a dos aguas con la rueda como emblema ──
-    { const x = 10, y = -8, w = 32, h = 15;
-      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 1.4, y + 1.8, w, h);
-      g.fillStyle = '#a0553f'; g.fillRect(x, y, w, h / 2); g.fillStyle = '#84432f'; g.fillRect(x, y + h / 2, w, h / 2);
-      g.fillStyle = 'rgba(0,0,0,0.2)'; for (let k = 1.4; k < h; k += 1.4) g.fillRect(x, y + k, w, 0.3);
-      g.fillStyle = '#c47a5e'; g.fillRect(x, y + h / 2 - 0.4, w, 0.8);
-      wheelDisc(x + w / 2, y + h / 2, 5.6, t * 0.45);
-      g.fillStyle = '#9a7a52'; g.fillRect(x, y + h, w, 3.2);
-      g.fillStyle = '#3a2a1a'; g.fillRect(x + w / 2 - 1.6, y + h + 0.4, 3.2, 2.8);
-      g.fillStyle = `rgba(255,214,120,${0.7 + 0.3 * N})`; [4, 9, w - 13, w - 7].forEach((ox) => g.fillRect(x + ox, y + h + 0.8, 2.6, 1.6));
-      for (let k = 0; k < 17; k++) { g.fillStyle = (Math.floor(t * 3) + k) % 2 ? '#fff3b0' : '#ff9e5e'; g.fillRect(x + 1 + k * 1.85, y + 0.5, 0.9, 0.9); g.fillRect(x + 1 + k * 1.85, y + h - 1.3, 0.9, 0.9); }
-    }
-    // ── TALLER: tejado azul con un engranaje, y el banco con los aparatos ──
-    { const x = 50, y = -8, w = 16, h = 13;
-      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 1.4, y + 1.8, w, h);
-      g.fillStyle = '#56789a'; g.fillRect(x, y, w, h / 2); g.fillStyle = '#42607d'; g.fillRect(x, y + h / 2, w, h / 2);
-      g.fillStyle = 'rgba(0,0,0,0.2)'; for (let k = 1.4; k < h; k += 1.4) g.fillRect(x, y + k, w, 0.3);
-      g.save(); g.translate(x + w / 2, y + h / 2); g.rotate(t * 0.6); g.fillStyle = '#d9dee3';
-      for (let k = 0; k < 8; k++) { g.save(); g.rotate(k * Math.PI / 4); g.fillRect(-0.8, -4.6, 1.6, 2); g.restore(); }
-      g.beginPath(); g.arc(0, 0, 3.6, 0, 7); g.fill(); g.fillStyle = '#42607d'; g.beginPath(); g.arc(0, 0, 1.6, 0, 7); g.fill(); g.restore();
-      g.fillStyle = '#9a7a52'; g.fillRect(x, y + h, w, 3.2); g.fillStyle = `rgba(255,214,120,${0.7 + 0.3 * N})`; g.fillRect(x + 2, y + h + 0.8, 3, 1.6); g.fillRect(x + w - 5, y + h + 0.8, 3, 1.6);
-      ['#ffd23f', '#7bdc6a', '#4cc9f0', '#c77dff', '#ff9e5e'].forEach((c, k) => {            // los cinco aparatos, con su nivel
-        const bx = x + 0.6 + k * 3.1, by = 14.5; g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(bx + 0.4, by + 0.5, 2.6, 2.6);
-        g.fillStyle = '#6b5a45'; g.fillRect(bx, by, 2.6, 2.6); g.fillStyle = c; g.fillRect(bx + 0.5, by + 0.5, 1.6, 1.6);
-        for (let p = 0; p < 3; p++) { g.fillStyle = p < lvl(UPGRADES[k].id) ? '#ffd23f' : '#3a3a3a'; g.fillRect(bx + 0.1 + p * 0.9, by + 3.3, 0.6, 0.6); }   // el nivel real de cada mejora
-      });
-    }
-    // ── NIDO: estantes con los huevos por rareza ──
-    { const x = 0, y = 15, w = 15, h = 14;
-      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 1.2, y + 1.6, w, h);
-      g.fillStyle = '#6b4a2b'; g.fillRect(x, y, w, h); g.fillStyle = '#8a6a44'; g.fillRect(x, y, w, 1); g.fillRect(x, y + 6.4, w, 0.8);
-      const slots = S.inv.slice(0, 6).map((it) => it.tier);                                    // tus huevos sin abrir
-      [0, 1, 2, 3, 4, 5].forEach((k) => {
-        const tr = slots[k];
-        const nx = x + 2.6 + (k % 3) * 4.6, ny = y + 3.6 + Math.floor(k / 3) * 5.6;
-        g.fillStyle = '#4a3420'; g.beginPath(); g.arc(nx, ny, 2.1, 0, 7); g.fill(); g.fillStyle = '#d9b86a'; g.beginPath(); g.arc(nx, ny, 1.65, 0, 7); g.fill();
-        if (!tr) return;
-        if (tr === 'mitico') glow(nx, ny, 5, 'rgba(255,77,141,A)', 0.4 + 0.2 * Math.sin(t * 3));
-        g.fillStyle = TIERS[tr].color; g.beginPath(); g.ellipse(nx, ny, 1.05, 1.35, 0, 0, 7); g.fill();
-        g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(nx - 0.5, ny - 0.9, 0.5, 0.5);
-      });
-    }
-    // ── MUSEO: peceras con las especies descubiertas ──
-    { const x = 36, y = 15, w = 12, h = 14;
-      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 1.2, y + 1.6, w, h);
-      g.fillStyle = '#6f8a96'; g.fillRect(x, y, w, h);
-      for (let k = 0; k < 3; k++) {
-        const ty = y + 1 + k * 4.2; g.fillStyle = '#2d6f8a'; g.fillRect(x + 1, ty, w - 2, 3.4); g.fillStyle = 'rgba(190,240,255,0.25)'; g.fillRect(x + 1, ty, w - 2, 1);
-        const fx = x + 3 + (Math.sin(t * 0.7 + k * 2) * 0.5 + 0.5) * (w - 7), col = ['#e07a2f', '#f5f5f5', '#ffd23f'][k];
-        g.fillStyle = col; g.beginPath(); g.ellipse(fx, ty + 1.7, 1.5, 0.8, 0, 0, 7); g.fill(); g.beginPath(); g.moveTo(fx - 1.3, ty + 1.7); g.lineTo(fx - 2.5, ty + 0.9); g.lineTo(fx - 2.5, ty + 2.5); g.closePath(); g.fill();
-      }
-      g.strokeStyle = 'rgba(255,255,255,0.35)'; g.lineWidth = 0.35; g.strokeRect(x + 0.2, y + 0.2, w - 0.4, h - 0.4);
-    }
-    // ── TABLÓN DE ENCARGOS ──
-    { const x = 54, y = 22, w = 13, h = 7;
-      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 1.2, y + 1.4, w, h);
-      g.fillStyle = '#4a3420'; g.fillRect(x - 0.6, y - 0.6, w + 1.2, h + 1.2); g.fillStyle = '#b08a5a'; g.fillRect(x, y, w, h);
-      [0, 1, 2].map((k) => [['#fff6c2', '#f2f2f2', '#ffe08a'][k], !!(S.quests && S.quests.list[k] && S.quests.list[k].done)]).forEach(([c, done], k) => {        // tacha los encargos cumplidos
-        const nx = x + 1 + k * 4, ny = y + 1 + (k % 2) * 0.8; g.fillStyle = c; g.fillRect(nx, ny, 3.2, 4.4);
-        g.fillStyle = 'rgba(0,0,0,0.3)'; for (let l = 0; l < 3; l++) g.fillRect(nx + 0.4, ny + 0.9 + l * 1, 2.4, 0.3);
-        g.fillStyle = '#d0463b'; g.fillRect(nx + 1.4, ny - 0.5, 0.5, 0.5);
-        if (done) { g.strokeStyle = '#3f9a52'; g.lineWidth = 0.55; g.beginPath(); g.moveTo(nx + 0.5, ny + 2.6); g.lineTo(nx + 1.4, ny + 3.5); g.lineTo(nx + 2.8, ny + 1.4); g.stroke(); }
-      });
-    }
-    // ── poste con flechas hacia las zonas, farolillos y macetas ──
-    { const px = 4, py = 8.5;
-      g.fillStyle = '#4a3420'; g.fillRect(px - 0.3, py - 4, 0.6, 5);
-      [['#4cc9f0', -1, -3.4], ['#7bdc6a', 1, -2.2], ['#c77dff', -1, -1]].forEach(([c, d, oy]) => { g.fillStyle = c; g.beginPath(); g.moveTo(px - d * 2.6, py + oy - 0.5); g.lineTo(px + d * 1.2, py + oy - 0.5); g.lineTo(px + d * 2.2, py + oy); g.lineTo(px + d * 1.2, py + oy + 0.5); g.lineTo(px - d * 2.6, py + oy + 0.5); g.closePath(); g.fill(); });
-    }
-    [[X0 + 1.8, Y0 + 1.8], [X1 - 1.8, Y0 + 1.8], [X0 + 1.8, Y1 - 1.8], [X1 - 1.8, Y1 - 1.8], [30, 12.5], [52, 12.5], [8, 33], [44, 36]].forEach(([lx, ly]) => lamp(lx, ly, N));
-    [[17, 13], [36, 13.6], [52, 13], [66, 13], [6, 36], [50, 36]].forEach(([mx, my], k) => { g.fillStyle = '#7a4a2e'; g.fillRect(mx - 1, my, 2, 1.6); [0, 1, 2].forEach((f) => { g.fillStyle = ['#ff8fb1', '#ffe66d', '#ffffff'][(f + k) % 3]; g.fillRect(mx - 1 + f * 0.9, my - 1 + (f % 2) * 0.4, 0.8, 0.8); }); });
-    g.restore();
-  }
-
-  // dónde se toca cada edificio de la Plaza (coordenadas del muelle colocado en (34, 16)) y qué pantalla abre
-  const PLAZA_SPOTS = [
-    { x: 26, y: 28, r: 9, panel: 'ruleta' },       // la máquina
-    { x: 26, y: -1, r: 11, panel: 'ruleta' },      // el casino
-    { x: 58, y: -2, r: 8, panel: 'upgrades' },     // el taller
-    { x: 7.5, y: 22, r: 8, panel: 'ruleta', view: 'huevos' },      // el nido (sus huevos se ven y se abren en la mesa de la ruleta)
-    { x: 42, y: 22, r: 7, panel: 'album' },        // el museo
-    { x: 60.5, y: 25.5, r: 7, panel: 'quests' },   // el tablón
-  ];
-
   let hudAcc = 0, lureRip = 0, rainDrop = 0, portalWas = null;
   function update(dt) {
     t += dt;
     const fm = foodMax();
     if (S.food < fm) { S.foodT += dt; const fe = foodEvery(); while (S.foodT >= fe && S.food < fm) { S.food++; S.foodT -= fe; } } else S.foodT = 0;
-    const mf = maxFichas();
-    if (S.fichas < mf) { S.fichaT += dt; const fe = fichaEvery(); while (S.fichaT >= fe && S.fichas < mf) { S.fichas++; S.fichaT -= fe; refreshHud(); } } else S.fichaT = 0;
 
     const now = Date.now();
     for (let i = S.eggs.length - 1; i >= 0; i--) {
@@ -2075,7 +1748,6 @@
     });
     pellets = pellets.filter((p) => t - p.born < 30);
     ripples = ripples.filter((r) => t - r.born < r.max);
-    fx = fx.filter((f) => t - f.t0 < f.life); fx.forEach((f) => { f.x += f.vx * dt; f.y += f.vy * dt; f.vy += 14 * dt; });
 
     // mejoras: el comedero echa bolitas a quien tenga hambre y la red recoge las perlas sola
     if (lvl('feeder')) {
@@ -2150,7 +1822,7 @@
   // Las letras y el resplandor se hacen en la tarjeta gráfica (ascii-gl.js). Si el dispositivo no
   // tiene WebGL2, se usa el camino antiguo con el lienzo 2D (toAscii y bloom, más abajo).
   let glr = null;
-  try { if (NOGL) throw new Error('forzado con ?2d'); glr = ASCII_GL.create(canvas); } catch (err) {
+  try { glr = ASCII_GL.create(canvas); } catch (err) {
     console.warn('WebGL2 no disponible, se pinta con el lienzo 2D', err);
     glr = null;
     const fresh2 = canvas.cloneNode(); canvas.replaceWith(fresh2); canvas = fresh2;   // un lienzo con contexto WebGL ya no admite 2D
@@ -2166,245 +1838,6 @@
   const CH_VLO = ['.', ',', "'", '`'];
   const CHARSET = [...CH_HI, ...CH_MID, ...CH_LO, ...CH_VLO];
   const IDX = new Map(CHARSET.map((c, i) => [c, i]));
-
-  // ───────────────────────── capa de texto ─────────────────────────
-  // Una rejilla de caracteres propia (cada uno de tw×th píxeles, con las proporciones de una fuente monoespaciada), pintada encima
-  // de todo y sin resplandor: texto nítido a cualquier zoom, anclado a la pantalla o a un punto del mundo. Cada frase puede
-  // registrar una zona de toque. En WebGL la pinta ascii-gl.js; sin WebGL, drawText2D().
-  const TEXT_CHARS = [' ', ...Array.from({ length: 94 }, (_, i) => String.fromCharCode(33 + i)), ...'áéíóúüñÁÉÍÓÚÜÑ¿¡·×½█░▒▓─│┌┐└┘●○▶◀▲▼…'];   // la 0 es «nada»
-  const TCI = new Map(TEXT_CHARS.map((c, i) => [c, i]));
-  TCI.set(' ', 0);
-  const TL = { cols: 1, rows: 1, tw: 1, th: 1, ch: null, fg: null, bg: null, hits: [] };
-  const WHITE = [255, 255, 255, 255], DIMC = [142, 166, 179, 255], GREENC = [155, 231, 160, 255], GOLDC = [255, 210, 63, 255];
-  const BAR = [0, 0, 0, 150], TAG = [8, 14, 20, 215];
-
-  // el tamaño de letra sigue al de las celdas: en móvil (celdas pequeñas) el texto va a triple altura de celda
-  function textSize() {
-    const ts = cellCss < 7 ? 3 : 2;
-    TL.th = ts * cellDev; TL.tw = Math.round(TL.th * 0.6);
-    TL.cols = Math.ceil(canvas.width / TL.tw); TL.rows = Math.ceil(canvas.height / TL.th);
-    const n = TL.cols * TL.rows;
-    TL.ch = new Uint8Array(n); TL.fg = new Uint8Array(n * 4); TL.bg = new Uint8Array(n * 4);
-  }
-  function tlPut(c, r, ci, fg, bg) {
-    if (c < 0 || r < 0 || c >= TL.cols || r >= TL.rows) return;
-    const i = r * TL.cols + c;
-    TL.ch[i] = ci;
-    if (fg) TL.fg.set(fg, i * 4);
-    if (bg) TL.bg.set(bg, i * 4);
-  }
-  function tlText(c, r, str, fg, bg) { for (let k = 0; k < str.length; k++) tlPut(c + k, r, TCI.has(str[k]) ? TCI.get(str[k]) : TCI.get('?'), fg, bg); }
-  // píxeles de pantalla (CSS) de un punto del mundo y al revés para los toques
-  const worldToScreen = (x, y) => { const u = U(); return [((x - cam.x) * u + GW / 2) * cellCss, ((y - cam.y) * u + GH / 2) * cellCss]; };
-  function tlHitAt(cx, cy) {
-    const c = Math.floor(cx * dpr / TL.tw), r = Math.floor(cy * dpr / TL.th);
-    for (let i = TL.hits.length - 1; i >= 0; i--) { const h = TL.hits[i]; if (c >= h.c0 && c <= h.c1 && r >= h.r0 && r <= h.r1) return h; }
-    return null;
-  }
-  // un cartel centrado en un punto del mundo; si lleva fn, se puede tocar (la zona de toque es de tres filas de alto)
-  function labelAt(wx, wy, str, fg, bg, fn) {
-    const [px, py] = worldToScreen(wx, wy), len = str.length;
-    const c0 = Math.round(px * dpr / TL.tw - len / 2), r0 = Math.round(py * dpr / TL.th - 0.5);
-    if (c0 + len + 1 < 0 || c0 - 1 >= TL.cols || r0 < 0 || r0 >= TL.rows) return;
-    for (let k = -1; k <= len; k++) tlPut(c0 + k, r0, 0, null, bg);
-    tlText(c0, r0, str, fg);
-    if (fn) TL.hits.push({ c0: c0 - 1, c1: c0 + len, r0: r0 - 1, r1: r0 + 1, fn, txt: str });
-  }
-  // el marcador de arriba: zona y hora a la izquierda; perlas, fichas y comida a la derecha (en móvil, en una segunda fila)
-  function hudText() {
-    const compact = TL.cols < 54, hold = spinHold ? spinHold.gain : 0;
-    for (let r = 0; r < (compact ? 2 : 1); r++) for (let c = 0; c < TL.cols; c++) tlPut(c, r, 0, null, BAR);
-    tlText(1, 0, zoneLine(), WHITE);
-    const stats = [['PERLAS ', fmt(S.perlas - hold), WHITE], ['FICHAS ', String(S.fichas), S.fichas >= 1 ? GREENC : WHITE], ['COMIDA ', S.food + '/' + foodMax(), S.food <= 0 ? GOLDC : WHITE]];
-    const total = stats.reduce((acc, s) => acc + s[0].length + s[1].length + 2, -2);
-    let c = compact ? 1 : TL.cols - total - 2;
-    stats.forEach(([l, v, col]) => { tlText(c, compact ? 1 : 0, l, DIMC); c += l.length; tlText(c, compact ? 1 : 0, v, col); c += v.length + 2; });
-  }
-  // el punto de la frontera donde se pone el cartel de compra de la zona siguiente
-  function barrierAnchor(i) {
-    let best = null, most = 0;
-    for (const j of MAP.adj[i]) {
-      if (j >= MAIN || !isOpen(j)) continue;
-      const pts = MAP.borders.get(Math.min(i, j) * NZ + Math.max(i, j));
-      if (pts && pts.length > most) { most = pts.length; best = MAP.waypoint(j, i); }
-    }
-    return best;
-  }
-  const PLAZA_LABELS = [
-    { txt: 'CASINO', x: 26, y: 13.5, fg: [255, 210, 63, 255], panel: 'ruleta' },
-    { txt: 'TALLER', x: 58, y: 8.5, fg: [159, 232, 255, 255], panel: 'upgrades' },
-    { txt: 'NIDO', x: 7.5, y: 31, fg: [255, 217, 138, 255], panel: 'ruleta', view: 'huevos' },
-    { txt: 'MUSEO', x: 42, y: 31, fg: [191, 234, 245, 255], panel: 'album' },
-    { txt: 'TABLÓN', x: 60.5, y: 31, fg: [155, 231, 160, 255], panel: 'quests' },
-  ];
-  // abre lo que hay detrás de un edificio de la Plaza: la mesa de la ruleta o una pantalla de las de siempre
-  const openPlazaSpot = (panel, view) => { if (panel === 'ruleta') enterMesa(0, view); else { mesa = null; show(panel); } };
-
-  const hexRGBA = (h) => [...hex(h), 255];
-  const tlCenterCol = (cx, str) => cx - Math.floor(str.length / 2);
-  // una frase con un poco de fondo alrededor, sin tocar
-  function tlTag(c, r, str, fg, bg) { for (let k = -1; k <= str.length; k++) tlPut(c + k, r, 0, null, bg || TAG); tlText(c, r, str, fg); }
-  // un botón de tres filas de alto centrado en la columna cx; apagado no se toca
-  function tlButton(cx, row, str, enabled, fn, color) {
-    const w = str.length + 4, c0 = cx - Math.floor(w / 2), bg = enabled ? (color || [28, 96, 62, 235]) : [30, 34, 40, 210];
-    for (let r = 0; r < 3; r++) for (let k = 0; k < w; k++) tlPut(c0 + k, row + r, 0, null, bg);
-    tlText(c0 + 2, row + 1, str, enabled ? WHITE : DIMC);
-    if (enabled && fn) TL.hits.push({ c0, c1: c0 + w - 1, r0: row, r1: row + 2, fn, txt: str });
-  }
-  // un botón de una fila (zona de toque de dos)
-  function tlThin(c0, row, str, fn, color) {
-    for (let k = 0; k < str.length + 2; k++) tlPut(c0 + k, row, 0, null, color || [28, 96, 62, 235]);
-    tlText(c0 + 1, row, str, WHITE);
-    TL.hits.push({ c0, c1: c0 + str.length + 1, r0: row, r1: row + 1, fn, txt: str });
-    return c0 + str.length + 4;
-  }
-
-  // la pantalla de la ruleta, en la capa de texto, alrededor de la máquina que se ve en el mapa
-  function mesaText() {
-    const zi = mesa.zi, z = ZONES[zi], m = machineOf(zi), cols = TL.cols, wide = cols >= 72, compact = cols < 54;
-    const [sx, sy] = worldToScreen(m.x, m.y), cx = Math.round(sx * dpr / TL.tw), hudRows = compact ? 2 : 1;
-    const P = S.pity[zi] || { o: 0, m: 0 }, cost = spinCost(zi), closed = zi === PORTAL && !portalOpen(), can = !wheelBusy && !closed;
-    const tr = hudRows + (compact ? 2 : 1), last = TL.rows - 5;                     // el final deja sitio a la barra de botones de abajo
-    // título, rueda anterior / siguiente y volver
-    const title = 'RULETA · ' + z.name.toUpperCase(), tc = tlCenterCol(cx, title);
-    tlTag(tc, tr, title, WHITE);
-    const arrow = (c, str, dir) => { tlTag(c, tr, str, GOLDC); TL.hits.push({ c0: c - 2, c1: c + 2, r0: tr, r1: tr + 1, fn: () => mesaStep(dir), txt: str }); };
-    arrow(tc - 5, '◀', -1); arrow(tc + title.length + 4, '▶', 1);
-    const vr = compact ? hudRows : tr;                                                // en móvil VOLVER va en su propia fila: no cabe junto al título
-    tlTag(1, vr, '× VOLVER', WHITE, [60, 30, 30, 215]);
-    TL.hits.push({ c0: 0, c1: 10, r0: vr, r1: vr + 1, fn: exitMesa, txt: 'VOLVER' });
-    // pestañas
-    const tabs = [['giro', 'GIRAR'], ['probs', compact ? 'PROBS' : 'PROBABILIDADES'], ['huevos', 'HUEVOS ' + S.inv.length]];
-    const total = tabs.reduce((a, tb) => a + tb[1].length + 4, 0) + 2 * (tabs.length - 1);
-    let c = cx - Math.floor(total / 2);
-    tabs.forEach(([v, label]) => {
-      const w = label.length + 4, on = mesa.view === v;
-      for (let k = 0; k < w; k++) tlPut(c + k, tr + 2, 0, null, on ? [40, 84, 124, 240] : [20, 26, 34, 205]);
-      tlText(c + 2, tr + 2, label, on ? WHITE : DIMC);
-      TL.hits.push({ c0: c, c1: c + w - 1, r0: tr + 2, r1: tr + 3, fn: () => { mesa.view = v; mesa.page = 0; }, txt: label });
-      c += w + 2;
-    });
-    // el contenido va debajo de la máquina
-    let r = Math.max(tr + 6, Math.ceil((sy + (MACHINE_R + 4.8) * m.k * cam.z) * dpr / TL.th) + 1);
-    const say = (str, fg) => { if (r <= last) tlTag(tlCenterCol(cx, str), r, str, fg); r++; };
-    if (mesa.view === 'giro') {
-      const msg = wheelBusy ? ['GIRANDO…', DIMC] : wheelMsg ? [wheelMsg.text.toUpperCase(), hexRGBA(wheelMsg.color)] : ['TOCA LA RUEDA, LA PALANCA O UN BOTÓN', DIMC];
-      say(msg[0], msg[1]); r++;
-      const items = [{ s: 'GIRAR · ' + fmt(cost) + ' PERLAS', on: can && S.perlas >= cost, fn: () => startSpin(zi, 'perlas'), color: [30, 110, 70, 240] },
-        { s: (compact ? 'FICHA · ' : 'GIRAR CON FICHA · ') + S.fichas, on: can && S.fichas >= 1, fn: () => startSpin(zi, 'ficha') }];
-      if (S.freeSpins) items.push({ s: 'GIRO GRATIS · ' + S.freeSpins, on: can, fn: () => startSpin(zi, 'libre'), color: [90, 70, 20, 240] });
-      if (wide) {                                                                   // en una fila
-        const ws = items.map((it) => it.s.length + 4), sum = ws.reduce((a, b) => a + b, 0) + 2 * (items.length - 1);
-        let bc = cx - Math.floor(sum / 2);
-        items.forEach((it, i) => { tlButton(bc + Math.floor(ws[i] / 2), r, it.s, it.on, it.fn, it.color); bc += ws[i] + 2; });
-        r += 4;
-      } else items.forEach((it) => { if (r + 2 <= last) tlButton(cx, r, it.s, it.on, it.fn, it.color); r += 4; });
-      say('GARANTÍA · ORO EN ' + Math.max(1, WHEEL.pity.oro - P.o) + ' · MÍTICO EN ' + Math.max(1, WHEEL.pity.mitico - P.m), DIMC);
-      if (closed) say('EL PORTAL ABRE A LAS ' + portalNext(), GOLDC);
-      if (S.carps.length >= capacity()) say('ESTANQUE LLENO · LOS HUEVOS SE GUARDAN', GOLDC);
-    } else if (mesa.view === 'probs') {
-      say('PROBABILIDADES DE ESTA RUEDA', DIMC); r++;
-      const row = (o, c0, rr) => {
-        if (rr > last) return;
-        for (let k = 0; k < 40; k++) tlPut(c0 + k, rr, 0, null, TAG);
-        tlPut(c0 + 1, rr, TCI.get('█'), hexRGBA(o.color));
-        tlText(c0 + 3, rr, oddsLabel(zi, o).toUpperCase(), WHITE);
-        const right = (o.p * 100).toFixed(o.p < 0.01 ? 2 : 1) + ' % · 1/' + Math.round(1 / o.p);
-        tlText(c0 + 39 - right.length, rr, right, DIMC);
-      };
-      if (wide) {                                                                   // en pantalla ancha, dos columnas: así caben las diez filas
-        const half = Math.ceil(WHEEL.outcomes.length / 2);
-        WHEEL.outcomes.forEach((o, i) => row(o, i < half ? Math.max(1, cx - 42) : cx + 2, r + (i < half ? i : i - half)));
-        r += half;
-      } else WHEEL.outcomes.forEach((o) => { row(o, Math.max(1, cx - 19), r); r++; });
-    } else {
-      // huevos sin abrir, agrupados por tipo y zona
-      const groups = [], seen = new Map();
-      S.inv.forEach((it, i) => { const k = it.tier + '|' + it.zone + '|' + (it.world || ''); if (!seen.has(k)) { seen.set(k, groups.length); groups.push({ it, i, n: 0 }); } groups[seen.get(k)].n++; });
-      say('HUEVOS ' + S.inv.length + ' · CARPAS ' + S.carps.length + '/' + capacity(), DIMC); r++;
-      if (!groups.length) say('SIN HUEVOS · SAL A PROBAR SUERTE', DIMC);
-      else {
-        const stride = wide ? 2 : 4, per = Math.max(1, Math.floor((last - r - 1) / stride)), pages = Math.ceil(groups.length / per);
-        mesa.page = clamp(mesa.page, 0, pages - 1);
-        groups.slice(mesa.page * per, mesa.page * per + per).forEach(({ it, i, n }) => {
-          const col = hexRGBA(TIERS[it.tier].color);
-          const desc = '● ' + TIERS[it.tier].name.toUpperCase() + (n > 1 ? ' ×' + n : '') + ' · ' + ZONES[it.zone].name.toUpperCase() + (it.world ? ' · ' + WORLDS.find((w) => w.id === it.world).name.toUpperCase() : '');
-          const sell = 'CAMBIAR · ' + fmt(eggSale(it));
-          if (wide) {
-            const c0 = Math.max(1, cx - 34);
-            tlTag(c0, r, desc, col);
-            const nx = tlThin(c0 + desc.length + 3, r, 'ABRIR', () => openEgg(i));
-            tlThin(nx, r, sell, () => sellEgg(i), [70, 56, 20, 235]);
-          } else {
-            tlTag(1, r, desc, col);
-            const nx = tlThin(1, r + 1, 'ABRIR', () => openEgg(i));
-            tlThin(nx, r + 1, sell, () => sellEgg(i), [70, 56, 20, 235]);
-          }
-          r += stride;
-        });
-        if (pages > 1) {
-          const pg = '◀ ' + (mesa.page + 1) + '/' + pages + ' ▶', pc = tlCenterCol(cx, pg);
-          tlTag(pc, last, pg, WHITE);
-          TL.hits.push({ c0: pc - 2, c1: pc + 3, r0: last - 1, r1: last, fn: () => { mesa.page = Math.max(0, mesa.page - 1); }, txt: '◀' });
-          TL.hits.push({ c0: pc + pg.length - 4, c1: pc + pg.length + 2, r0: last - 1, r1: last, fn: () => { mesa.page = Math.min(pages - 1, mesa.page + 1); }, txt: '▶' });
-        }
-      }
-    }
-  }
-  // el cartel que sale al abrir un huevo
-  function bannerText() {
-    if (!banner) return;
-    if (t > banner.until) { banner = null; return; }
-    const w = Math.max(...banner.lines.map((s) => s.length)) + 4, c0 = Math.floor((TL.cols - w) / 2), r0 = (TL.cols < 54 ? 2 : 1) + 2;
-    banner.lines.forEach((s, k) => {
-      for (let i = 0; i < w; i++) tlPut(c0 + i, r0 + k, 0, null, TAG);
-      tlText(c0 + 2 + Math.floor((w - 4 - s.length) / 2), r0 + k, s, k === 1 ? banner.color : k === 0 ? GOLDC : DIMC);
-    });
-  }
-  function composeText() {
-    TL.ch.fill(0); TL.fg.fill(0); TL.bg.fill(0); TL.hits.length = 0;
-    document.body.classList.toggle('mesa', !!mesa);                  // con la ruleta abierta se esconden el aviso de abajo, el botón de recoger y el zoom
-    hudText();
-    if (mesa) { mesaText(); return; }
-    bannerText();
-    // carteles de la Plaza y de las máquinas de ruleta: solo si hay zoom para que no se amontonen
-    if (cam.z >= 3.5) {
-      const pier = MAP.ISLANDS[0].find((is) => is.pier);
-      if (pier) {
-        const ox = pier.x - 34, oy = pier.y - 16;
-        PLAZA_LABELS.forEach((L) => labelAt(L.x + ox, L.y + oy, L.txt, L.fg, TAG, () => openPlazaSpot(L.panel, L.view)));
-        labelAt(26 + ox, 17 + oy, 'FICHAS ' + Math.min(99, S.fichas), GREENC, [6, 21, 15, 230], () => enterMesa(0));
-      }
-      for (let zi = 1; zi < MAIN; zi++) {
-        if (!S.unlocked[zi]) continue;
-        const s = stallOf(zi); labelAt(s.x, s.y - 9, 'RULETA', GOLDC, TAG, () => enterMesa(zi));
-      }
-    }
-    // comprar una zona se hace en su barricada: un cartel con el precio que se pone verde cuando llegan las perlas
-    if (cam.z >= 2.2) {
-      for (let zi = 1; zi < MAIN; zi++) {
-        if (status(zi) !== 1) continue;
-        const p = barrierAnchor(zi); if (!p) continue;
-        const z = ZONES[zi], can = S.perlas >= z.cost;
-        labelAt(p.x, p.y, 'ABRIR ' + z.name.toUpperCase() + ' · ' + fmt(z.cost), can ? GREENC : DIMC, TAG,
-          () => { if (can) unlockZone(zi); else toast('faltan ' + fmt(z.cost - S.perlas) + ' perlas para abrir ' + z.name, '#ffb703', 1800); });
-      }
-    }
-  }
-  // sin WebGL: cada celda ocupada se pinta con el lienzo 2D
-  function drawText2D() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
-    ctx.font = 'bold ' + Math.round(TL.th * 0.8) + 'px ' + FONT; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    for (let r = 0, i = 0; r < TL.rows; r++) {
-      for (let c = 0; c < TL.cols; c++, i++) {
-        const ba = TL.bg[i * 4 + 3], ci = TL.ch[i];
-        if (!ba && !ci) continue;
-        const x = c * TL.tw, y = r * TL.th;
-        if (ba) { ctx.fillStyle = 'rgba(' + TL.bg[i * 4] + ',' + TL.bg[i * 4 + 1] + ',' + TL.bg[i * 4 + 2] + ',' + ba / 255 + ')'; ctx.fillRect(x, y, TL.tw + 0.5, TL.th + 0.5); }
-        if (ci) { ctx.fillStyle = 'rgba(' + TL.fg[i * 4] + ',' + TL.fg[i * 4 + 1] + ',' + TL.fg[i * 4 + 2] + ',' + TL.fg[i * 4 + 3] / 255 + ')'; ctx.fillText(TEXT_CHARS[ci], x + TL.tw / 2, y + TL.th / 2 + TL.th * 0.04); }
-      }
-    }
-  }
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -2423,15 +1856,14 @@
     sinX = new Float32Array(GW); sinY = new Float32Array(GH);
     allocCells();
     camDirty = true;
-    textSize();
-    if (glr) { glr.resize({ cellDev, charset: CHARSET, font: FONT }); glr.textResize({ cols: TL.cols, rows: TL.rows, tw: TL.tw, th: TL.th, charset: TEXT_CHARS, font: FONT }); }
+    if (glr) glr.resize({ cellDev, charset: CHARSET, font: FONT });
     else {
       blooms.forEach((b, i) => { const d = [2, 4, 8][i]; b.width = Math.ceil(canvas.width / d); b.height = Math.ceil(canvas.height / d); });
       glyphs.clear();
     }
     if (!started) {          // primera vez: la partida guardada o el estanque del centro
       started = true;
-      if (S.cam && MAP.sample(S.cam.x, S.cam.y).r < 3) { cam.x = S.cam.x; cam.y = S.cam.y; cam.z = S.cam.z; } else { cam.x = W < 700 ? 32 : 22; cam.y = 10; cam.z = defaultZoom(); }        // al empezar se ve el laboratorio y la Plaza
+      if (S.cam && MAP.sample(S.cam.x, S.cam.y).r < 3) { cam.x = S.cam.x; cam.y = S.cam.y; cam.z = S.cam.z; } else { cam.x = 0; cam.y = 0; cam.z = defaultZoom(); }
     }
     clampCam();
   }
@@ -2530,7 +1962,6 @@
     });
     if (lure) { g.strokeStyle = 'rgba(255,255,255,0.75)'; g.lineWidth = Math.max(0.6, 1 / u); g.beginPath(); g.arc(lure.x, lure.y, 2.4 + Math.sin(t * 6) * 0.4, 0, 7); g.stroke(); }
     drawHeron();
-    drawFx();
 
     // 5) luz del día y lluvia, luces de la noche, y los avisos encima de todo
     applyLight(vw, vh);
@@ -2572,7 +2003,6 @@
   function render() {
     renderScene();
     if (glr) glr.draw({ src, hash: hArr, GW, GH, cellDev }); else { toAscii(); bloom(); }
-    composeText(); if (glr) glr.text(TL); else drawText2D();
   }
 
   // ───────────────────────── interacción ─────────────────────────
@@ -2585,31 +2015,13 @@
 
   // toque (sin arrastrar) sobre el mundo
   function tap(px, py) {
-    const txt = tlHitAt(px, py); if (txt) { txt.fn(); return; }            // lo que se toca en la capa de texto va antes que el mundo
     const [x, y] = screenToWorld(px, py), reach = (r) => Math.max(r, 18 / cam.z);   // zona de toque mínima en píxeles
-    // con la ruleta abierta, tocar la rueda o la palanca gira; el resto del mundo no hace nada
-    if (mesa) {
-      const m = machineOf(mesa.zi);
-      if (Math.hypot(m.x - x, m.y - y) < reach(MACHINE_R * m.k * 1.25) || Math.hypot(m.x + 8.6 * m.k - x, m.y - 4 * m.k - y) < reach(3 * m.k)) quickSpin(mesa.zi);
-      return;
-    }
     // la garza y la carpa de la fortuna, primero
     if (heron && heron.state !== 'out') { const [hx, hy] = heronPos(); if (Math.hypot(hx - x, hy - y) < reach(9)) { shooHeron(); return; } }
     if (fortune && Math.hypot(fortune.x - x, fortune.y - y) < reach(9)) { catchFortune(); return; }
     // tesoros
     for (const T of MAP.TREASURES) {
       if (!S.found[T.id] && isOpen(T.z) && Math.hypot(T.x - x, T.y - y) < reach(6)) { findTreasure(T); return; }
-    }
-    // los edificios de la Plaza
-    const pier = MAP.ISLANDS[0].find((is) => is.pier);
-    if (pier) for (const sp of PLAZA_SPOTS) {
-      if (Math.hypot(sp.x + pier.x - 34 - x, sp.y + pier.y - 16 - y) < reach(sp.r)) { openPlazaSpot(sp.panel, sp.view); return; }
-    }
-    // el puesto de la ruleta de cada zona abierta (el del Estanque es la máquina de la Plaza)
-    for (let zi = 1; zi < MAIN; zi++) {
-      if (!S.unlocked[zi]) continue;
-      const s = stallOf(zi);
-      if (Math.hypot(s.x - x, s.y - y) < reach(7)) { enterMesa(zi); return; }
     }
     // el laboratorio, en el islote del Estanque
     { const L = LAB_AT(); if (L && Math.hypot(L.x - x, L.y - y) < reach(L.r + 1)) { show('lab'); return; } }
@@ -2713,18 +2125,14 @@
   });
 
   // ───────────────────────── HUD ─────────────────────────
-  function zoneLine() {
-    const zi = MAP.zoneAt(cam.x, cam.y), parts = [isOpen(zi) ? zoneName(zi) : '', light.name];
-    if (raining) parts.push('lluvia');
-    return parts.filter(Boolean).join(' · ');
-  }
   function refreshHud() {
     const zi = MAP.zoneAt(cam.x, cam.y);
-    $('#zoneName').textContent = zoneLine();
+    const parts = [isOpen(zi) ? zoneName(zi) : '', light.name];
+    if (raining) parts.push('lluvia');
+    $('#zoneName').textContent = parts.filter(Boolean).join(' · ');
     if (isOpen(zi)) document.documentElement.style.setProperty('--accent', ZINFO[zi].water);
-    $('#perlas').innerHTML = `perlas <b>${fmt(S.perlas - (spinHold ? spinHold.gain : 0))}</b>`;
+    $('#perlas').innerHTML = `perlas <b>${fmt(S.perlas)}</b>`;
     $('#food').innerHTML = `comida <b>${S.food}/${foodMax()}</b>`;
-    $('#fichas').innerHTML = `fichas <b>${S.fichas}</b>`;
     // con dos o más perlas flotando aparece el botón para recogerlas todas
     const n = S.floating.length, btn = $('#collect');
     btn.hidden = n < 2;
@@ -2735,9 +2143,6 @@
     ensureQuests();
     const b = $('#nav [data-p="quests"]');
     if (b) b.classList.toggle('dot', S.quests.list.some((q) => q.done && !q.got));
-    const r = $('#nav [data-p="ruleta"]');                       // punto verde: hay fichas, giros gratis o huevos esperando
-    const held = spinHold || { egg: false, libre: false };       // lo que acaba de salir en la rueda no cuenta hasta que se pare
-    if (r) r.classList.toggle('dot', S.fichas >= 1 || S.freeSpins - (held.libre ? 1 : 0) > 0 || S.inv.length - (held.egg ? 1 : 0) > 0);
   }
   const bar = (v) => { const full = Math.round(clamp(v, 0, 100) / 10); return `[${'█'.repeat(full)}${'░'.repeat(10 - full)}]`; };
   function refreshInfo() {
@@ -2847,6 +2252,22 @@
         RECIPES.map((r) => (S.album[r.sp] ? card(SPECIES[r.sp], SPECIES[r.sp].name, S.album[r.sp] > 1 ? ' ×' + S.album[r.sp] : '') : cardOff(SPECIES[r.sp].r))).join('') + '</div>';
       const hy = Object.entries(S.hybrids);
       if (hy.length) html += `<div class="zone-title">crías <span>${hy.length}</span></div><div class="grid">` + hy.map(([n, h]) => card(h, n, h.n > 1 ? ' ×' + h.n : '')).join('') + '</div>';
+    } else if (kind === 'egg') {
+      const full = S.carps.length >= capacity();
+      const pend = S.eggs.map((e) => `<div>${e.lab ? 'laboratorio · ' + (e.sp ? '???' : e.hy.name) : e.hy ? 'cría · ' + e.hy.name : e.world ? WORLDS.find((w) => w.id === e.world).name : ZONES[e.zone].name} · ${Math.max(0, Math.ceil((e.ready - Date.now()) / 1000))}s</div>`).join('');
+      const note = light.night > 0.5 ? '<div class="sub">de noche salen más carpas raras</div>' : '';
+      html = `<div class="zone-title">huevos <span>${S.carps.length}/${capacity()} carpas</span></div>${note}` + ZONES.map((z, i) => {
+        if (!S.unlocked[i]) return '';
+        if (i === PORTAL) {
+          const w = worldToday(), open = portalOpen();
+          return `<div class="row"><pre style="color:${w.color}">  .--.  \n ( @@ ) \n  '--'  </pre>
+            <div><div class="nm">Huevo de otro mundo</div><div class="sub">hoy: ${w.name} · ${Math.round(EGG_TIME(i))}s</div></div>
+            <button data-egg="${i}" ${!open || S.perlas < z.egg || full ? 'disabled' : ''}>${full ? 'llenos' : open ? fmt(z.egg) + ' perlas' : 'abre a las ' + portalNext()}</button></div>`;
+        }
+        return `<div class="row"><pre>  .--.  \n (    ) \n  '--'  </pre>
+          <div><div class="nm">${z.name}</div><div class="sub">${Math.round(EGG_TIME(i))}s</div></div>
+          <button data-egg="${i}" ${S.perlas < z.egg || full ? 'disabled' : ''}>${full ? 'llenos' : fmt(z.egg) + ' perlas'}</button></div>`;
+      }).join('') + `<div class="egg-list">${pend}</div>`;
     } else if (kind === 'upgrades') {
       html = `<div class="zone-title">mejoras</div><div class="row"><pre class="lv">${S.lab.built ? ' ok ' : '    '}</pre>
           <div><div class="nm">Laboratorio</div><div class="sub">${S.lab.built ? 'en el islote del Estanque' : 'mezcla carpas y descubre criaturas'}</div></div>
@@ -2909,18 +2330,13 @@
     if (kind !== 'carp') releaseArm = null;
     lastHtml = '';
     renderPanel(kind); panel.hidden = false;
-    clearInterval(tickTimer); tickTimer = setInterval(() => { if (['carp', 'quests', 'upgrades', 'lab'].includes(openPanel)) renderPanel(openPanel); }, 1000);
+    clearInterval(tickTimer); tickTimer = setInterval(() => { if (['egg', 'carp', 'quests', 'upgrades', 'lab'].includes(openPanel)) renderPanel(openPanel); }, 1000);
   }
   function hide() { panel.hidden = true; openPanel = null; releaseArm = null; lastHtml = ''; clearInterval(tickTimer); }
 
   $('#info').addEventListener('click', () => { if (selected) { sheetCarp = selected; releaseArm = null; show('carp'); } });
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (!panel.hidden) hide(); else if (mesa) exitMesa(); } });
-  document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => {
-    SOUND.start();
-    if (b.dataset.p === 'ruleta') { const zc = MAP.zoneAt(cam.x, cam.y); enterMesa(zc < MAIN && S.unlocked[zc] ? zc : 0); return; }     // la ruleta de la zona que estás mirando
-    mesa = null;
-    show(b.dataset.p);
-  }));
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) hide(); });
+  document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => { SOUND.start(); show(b.dataset.p); }));
   $('#close').addEventListener('click', hide);
   panel.addEventListener('pointerdown', (e) => { if (e.target === panel) hide(); });
 
@@ -2962,6 +2378,13 @@
       sheetCarp = null; hide();
       toast(`${spOf(c).name} vuelve al río · +${fmt(v)} perlas`, RARITY[spOf(c).r].c, 2600);
       refreshHud(); refreshInfo(); save();
+    } else if (b.dataset.egg != null) {
+      const i = +b.dataset.egg, z = ZONES[i];
+      if (S.perlas >= z.egg && S.carps.length < capacity()) {
+        if (i === PORTAL && !portalOpen()) return;
+        S.perlas -= z.egg; S.eggs.push({ zone: i, ready: Date.now() + EGG_TIME(i) * 1000, world: i === PORTAL ? worldToday().id : undefined });
+        refreshHud(); save(); renderPanel('egg');
+      }
     } else if (b.dataset.up != null) {
       const u = UPGRADES.find((x) => x.id === b.dataset.up), n = lvl(u.id);
       if (n < u.cost.length && S.perlas >= u.cost[n]) {
@@ -2996,26 +2419,12 @@
   });
 
   // ───────────────────────── arranque ─────────────────────────
-  // Pestaña oculta: mientras está así el navegador detiene el juego, así que al volver se cuenta ese
-  // tiempo como el que estuviste fuera (hambre, perlas y comida), igual que al recargar.
-  let hiddenAt = 0;
-  window.addEventListener('visibilitychange', () => {
-    if (document.hidden) { hiddenAt = Date.now(); save(); return; }
-    if (!hiddenAt || DEMO !== null) return;
-    const secs = clamp((Date.now() - hiddenAt) / 1000, 0, 4 * 3600);
-    hiddenAt = 0;
-    if (secs < 30) return;
-    const got = applyAway(secs);
-    refreshHud();
-    if (got > 0 && secs > 60) toast(`mientras no estabas · +${fmt(got)} perlas`, '#fff1a8', 4000);
-    save();
-  });
+  window.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
   window.addEventListener('pagehide', save);
   setInterval(save, 10000);
 
   ensureQuests();
   resize(); refreshHud(); refreshInfo();
-  claimDaily();                                   // después de resize(): así lo que guarda lleva ya la cámara colocada
   if (DEMO !== null) { document.title = 'Estanque · muestra'; toast('partida de muestra · no se guarda', '#ffb703', 4000); }
   if (offline > 0 && AWAY > 60) { toast(`mientras no estabas · +${fmt(offline)} perlas`, '#fff1a8', 4000); save(); }
 

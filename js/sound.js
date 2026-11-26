@@ -70,13 +70,5 @@ const SOUND = (() => {
     shoo() { burst(0.3, 1600, 0.15); },
     secret() { [523, 659, 784, 1046, 1318].forEach((f, i) => blip(f, f, 0.5, 0.06, 'sine', i * 0.12)); },
     hatch() { blip(300, 900, 0.25, 0.08, 'triangle'); },
-    // ruleta: un clic por sector que pasa por la flecha y una fanfarria según lo grande que sea el premio (0..5)
-    tick() { blip(1900, 1500, 0.035, 0.045, 'square'); },
-    win(level) {
-      if (level <= 0) { blip(330, 260, 0.25, 0.05, 'sine'); return; }
-      const notes = [[523, 659], [523, 659, 784], [523, 659, 784, 1046], [523, 659, 784, 1046, 1318], [523, 659, 784, 1046, 1318, 1568, 2093]][Math.min(level, 5) - 1];
-      notes.forEach((f, i) => blip(f, f, 0.35 + level * 0.05, 0.06 + level * 0.006, level >= 4 ? 'triangle' : 'sine', i * 0.09));
-      if (level >= 4) { burst(0.5, 3200, 0.12); }
-    },
   };
 })();
