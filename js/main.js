@@ -1579,7 +1579,7 @@
   // ───────────────────────── gachapon ─────────────────────────
   // Cada zona abierta tiene su nenúfar (se dibuja en pads.js). Se toca, se tira, la flor se cierra, tiembla, se abre
   // y suelta una cápsula con la carpa dentro. El color de la cápsula avisa de la rareza antes de abrirse.
-  const PAD_K = 0.34;                    // escala del dibujo del nenúfar (unidades de boceto → mundo)
+  const PAD_K = 0.3;                     // escala del dibujo del nenúfar (unidades de boceto → mundo)
   const PAD_R = 12;                      // radio que ocupa en el agua (también la zona de toque)
   const PHASES = ['coin', 'shake', 'burst', 'rise', 'open'];
   const SHAKE = [0.7, 0.95, 1.5, 2.2, 3.0];               // lo que tiembla antes de abrirse, según la rareza
@@ -1597,10 +1597,10 @@
   const padSpots = [];
   function padOk(zi, x, y) {
     const q0 = MAP.sample(x, y);
-    if (q0.z !== zi || q0.r > 0.74) return false;
+    if (q0.z !== zi || q0.r > 0.82) return false;
     for (let k = 0; k < 8; k++) {
-      const a = k * Math.PI / 4, q = MAP.sample(x + Math.cos(a) * 11.5, y + Math.sin(a) * 5.5);
-      if (q.z !== zi || q.r > 0.82) return false;
+      const a = k * Math.PI / 4, q = MAP.sample(x + Math.cos(a) * 10.5, y + Math.sin(a) * 10.5);
+      if (q.z !== zi || q.r > 0.92) return false;
     }
     for (const is of MAP.ISLANDS[zi]) if (Math.hypot(is.x - x, is.y - y) < (is.temple ? 20 : is.r) + 14) return false;
     for (const T of MAP.TREASURES) if (Math.hypot(T.x - x, T.y - y) < 12) return false;
@@ -1615,7 +1615,7 @@
     if (zi === 0 && padOk(0, -24, -10)) found = { x: -24, y: -10 };
     for (let k = 0; k < 60 && !found; k++) {
       const a = (PAD_PREF[zi] == null ? 0 : PAD_PREF[zi]) + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.12;
-      for (const lim of [0.76, 0.72, 0.68, 0.8]) {
+      for (const lim of [0.8, 0.84, 0.76, 0.88]) {
         const p = MAP.shorePoint(zi, a, lim);
         if (p && padOk(zi, p[0], p[1])) { found = { x: p[0], y: p[1] }; break; }
       }
@@ -1659,7 +1659,7 @@
     S.gacha.out.push(...list.map((o) => ({ id: o.id, zi })));       // si se cierra la página a medias, se abren al volver
     gx = { zi, list, i: 0, ph: 'coin', t0: t, fast: n > 1, results: [] };
     lastBatch = null; hide(); selected = null; refreshInfo();
-    const sp = padSpot(zi); flyTo(sp.x, sp.y - 4, Math.max(cam.z, 13));
+    const sp = padSpot(zi); flyTo(sp.x, sp.y, Math.max(cam.z, 13));
     SOUND.plop(); ripple(sp.x, sp.y, true);
     refreshHud(); save();
   }
@@ -1676,7 +1676,7 @@
     let full = false, v = 0;
     if (S.carps.length >= capacity()) { full = true; v = releaseValue({ sp: id, xp: 0 }); S.perlas += v; }
     else {
-      let x = pad.x, y = pad.y + 7; if (!waterAt(x, y, 0.88)) { x = pad.x; y = pad.y; }
+      let x = pad.x, y = pad.y + 13; if (!waterAt(x, y, 0.88)) { x = pad.x; y = pad.y; }
       const c = initCarp({ sp: id, hunger: 60, xp: 0, x, y }); c.ang = Math.PI / 2; resetSpine(c); S.carps.push(c);
     }
     const k = S.gacha.out.findIndex((o) => o.id === id && o.zi === zi); if (k >= 0) S.gacha.out.splice(k, 1);
@@ -1689,13 +1689,13 @@
     const cur = gx.list[gx.i], R = cur.r, sp = padSpot(gx.zi), col = RARITY[R].c;
     gx.ph = ph; gx.t0 = t;
     if (ph === 'burst') {
-      sparks(sp.x, sp.y - 5, [8, 14, 26, 50, 90][R], col, true); ripple(sp.x, sp.y, false);
+      sparks(sp.x, sp.y - 1, [8, 14, 26, 50, 90][R], col, true); ripple(sp.x, sp.y, false);
       if (R >= 2) ripple(sp.x, sp.y, true);
       if (R >= 3) { SOUND.secret(); ripple(sp.x, sp.y, false); }
       if (R >= 4) SOUND.fortune();
     } else if (ph === 'open') {
       applyResult(gx.zi, cur.id);
-      sparks(sp.x, sp.y - 6, [6, 10, 18, 30, 50][R], col, false); SOUND.hatch(); ripple(sp.x, sp.y + 6, false);
+      sparks(sp.x, sp.y - 1, [6, 10, 18, 30, 50][R], col, false); SOUND.hatch(); ripple(sp.x, sp.y + 6, false);
     }
   }
   const phaseLen = (R, fast) => { const f = fast ? 0.45 : 1; return { coin: 0.45 * f, shake: Math.max(0.35, SHAKE[R] * f), burst: 0.3 * f, rise: 0.9 * f, open: 0.7 * f }; };
@@ -1746,7 +1746,7 @@
     if (zi >= MAIN || !isOpen(zi)) return;
     const sp = padSpot(zi), id = ZINFO[zi].id, st = padState(zi), mine = gx && gx.zi === zi;
     PADS.draw(g, id, sp.x, sp.y, PAD_K, st);
-    airLights.push({ x: sp.x, y: sp.y - 6, h: 0, r: mine ? 11 : 9, rgb: st.glowRgb || PADS.VARIANTS[id].glow, a: 0.14 + 0.4 * light.night + (mine ? 0.15 : 0) });
+    airLights.push({ x: sp.x, y: sp.y - 1, h: 0, r: mine ? 11 : 9, rgb: st.glowRgb || PADS.VARIANTS[id].glow, a: 0.1 + 0.22 * light.night + (mine ? 0.12 : 0) });
     if (id === 'nenufares') fireflies(sp.x, sp.y, 12, 6, 4, '255,235,110', 3);
   }
   function drawFx() {
@@ -1770,7 +1770,7 @@
     else if (zi === PORTAL) out += `<div class="note">hoy da al ${worldToday().name}</div>`;
     out += `<div class="pulls"><button data-pull="1" ${can(1)}>tirar · ${fmt(price)} perlas</button><button data-pull="10" ${can(10)}>×10 · ${fmt(price * 10)}</button></div>`;
     const F = GACHA.fichas, okZone = zi <= F.maxZone, nf = S.gacha.fichas;
-    out += `<button class="back" data-ficha ${!okZone || nf < 1 || gx ? 'disabled' : ''}>tirar con ficha · ${nf}/${F.max}</button>`;
+    out += `<button class="back" data-ficha ${!okZone || nf < 1 || gx ? 'disabled' : ''}>tirar con ficha · ${nf > F.max ? nf : nf + "/" + F.max}</button>`;
     out += `<div class="note">${okZone ? (nf >= F.max ? 'fichas al máximo' : `la siguiente ficha en ${Math.floor((F.every - (S.gacha.fichaT || 0)) / 60)}:${String(Math.floor((F.every - (S.gacha.fichaT || 0)) % 60)).padStart(2, '0')}`) + ` · ${F.daily} de regalo cada día` : `las fichas valen del ${ZONES[0].name} a ${ZONES[F.maxZone].name}`}</div>`;
     if (free) out += `<button class="back" data-free ${closed || gx ? 'disabled' : ''}>abrir cápsula guardada (${free})</button>`;
     if (full) out += '<div class="note">el estanque está lleno: las carpas nuevas vuelven al río y te dan sus perlas</div>';
@@ -2040,7 +2040,7 @@
     SPOT.crystals.forEach((k) => hole(k.x, k.y, 15, 0.85));
     hole(SPOT.shaft[0], SPOT.shaft[1], 24, 1);
     S.floating.forEach((p) => hole(p.x, p.y, 5, 0.6));          // las perlas también alumbran un poco
-    { const ps = padSpot(zi); hole(ps.x, ps.y - 4, PAD_R * 1.7, 0.95); }          // y el nenúfar de la máquina
+    { const ps = padSpot(zi); hole(ps.x, ps.y, PAD_R * 1.7, 0.95); }          // y el nenúfar de la máquina
     c.globalCompositeOperation = 'source-over';
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(darkCv, 0, 0); g.restore();
   }
@@ -2162,7 +2162,7 @@
     for (let zi = 0; zi < MAIN; zi++) {
       if (!isOpen(zi)) continue;
       const sp = padSpot(zi);
-      if (Math.hypot(sp.x - x, sp.y - 3 - y) < reach(PAD_R)) { if (!gx) openGacha(zi); return; }
+      if (Math.hypot(sp.x - x, sp.y - y) < reach(PAD_R)) { if (!gx) openGacha(zi); return; }
     }
     // el laboratorio, en el islote del Estanque
     { const L = LAB_AT(); if (L && Math.hypot(L.x - x, L.y - y) < reach(L.r + 1)) { show('lab'); return; } }
