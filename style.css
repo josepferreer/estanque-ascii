@@ -10,7 +10,7 @@
 
 * { box-sizing: border-box; margin: 0; }
 
-html, body { height: 100%; overflow: hidden; }
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
 
 body {
   background: var(--bg);
@@ -27,7 +27,7 @@ body {
 /* el estanque ocupa toda la ventana; lo demás flota encima */
 #app { position: fixed; inset: 0; overflow: hidden; }
 #stage { position: absolute; inset: 0; line-height: 0; }
-#pond { position: absolute; left: 0; top: 0; touch-action: manipulation; cursor: pointer; }
+#pond { position: absolute; left: 0; top: 0; touch-action: none; cursor: pointer; }   /* el juego hace él solo el arrastre y el zoom con dos dedos: el navegador no debe quedarse el gesto */
 
 #hud {
   position: absolute;
