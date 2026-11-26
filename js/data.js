@@ -65,24 +65,24 @@ const DATA = (() => {
   };
 
   // Laboratorio: se construye una vez; mezcla dos carpas adultas. Ciertas parejas dan una criatura.
-  const LAB = { cost: 2000 };
+  const LAB = { cost: 8000 };
   const RECIPES = [
     { sp: 'komodo', a: 'piedra', b: 'musgo', hint: 'algo duro como la roca y algo verde' },
   ];
 
   // Rincones secretos del mapa (en map.js, después de las seis zonas). Se encuentran, no se compran.
   const SECRETS = [
-    { id: 'gruta', name: 'Gruta escondida', water: '#46407a', shore: '#4a4058', grass: '#3b3358', species: 'eco', reward: 600 },
-    { id: 'poza', name: 'Poza secreta', water: '#784a6e', shore: '#6b5b45', grass: '#4a6b3a', species: 'rubi', reward: 300 },
+    { id: 'gruta', name: 'Gruta escondida', water: '#46407a', shore: '#4a4058', grass: '#3b3358', species: 'eco', reward: 4800 },
+    { id: 'poza', name: 'Poza secreta', water: '#784a6e', shore: '#6b5b45', grass: '#4a6b3a', species: 'rubi', reward: 2400 },
   ];
 
   // Mejoras que se compran con perlas: tres niveles cada una
   const UPGRADES = [
-    { id: 'feeder', name: 'Comedero automático', cost: [150, 900, 4000], desc: ['echa una bolita cada 25 s', 'cada 16 s', 'cada 10 s'] },
-    { id: 'net', name: 'Red de perlas', cost: [200, 1200, 5000], desc: ['recoge las perlas cada 30 s', 'cada 18 s', 'cada 10 s'] },
-    { id: 'amuleto', name: 'Amuleto de la suerte', cost: [120, 700, 3500], desc: ['las tiradas cuestan un 10 % menos', 'un 20 %', 'un 30 %'] },
-    { id: 'cap', name: 'Estanque más hondo', cost: [300, 1500, 6000], desc: ['+3 carpas de cupo', '+6', '+9'] },
-    { id: 'bag', name: 'Saco de comida', cost: [100, 600, 3000], desc: ['16 bolitas y salen antes', '20', '24'] },
+    { id: 'feeder', name: 'Comedero automático', cost: [600, 3600, 16000], desc: ['echa una bolita cada 25 s', 'cada 16 s', 'cada 10 s'] },
+    { id: 'net', name: 'Red de perlas', cost: [800, 4800, 20000], desc: ['recoge las perlas cada 30 s', 'cada 18 s', 'cada 10 s'] },
+    { id: 'amuleto', name: 'Amuleto de la suerte', cost: [500, 2800, 14000], desc: ['las tiradas cuestan un 10 % menos', 'un 20 %', 'un 30 %'] },
+    { id: 'cap', name: 'Estanque más hondo', cost: [1200, 6000, 24000], desc: ['+3 carpas de cupo', '+6', '+9'] },
+    { id: 'bag', name: 'Saco de comida', cost: [400, 2400, 12000], desc: ['16 bolitas y salen antes', '20', '24'] },
   ];
 
   // Encargos del día: cada día salen tres de esta lista
@@ -98,25 +98,27 @@ const DATA = (() => {
   ];
 
   // cost = perlas para desbloquear · pull = precio de una tirada · pool = especies que pueden salir
+  // Precios ajustados con una simulación de partidas (27/11): quien juega 1 h al día abre el Portal hacia el día 10 y
+  // quien juega 15 min, hacia el día 30; la primera tarde abre Nenúfares en 10-20 min y la Cascada en una hora y pico.
   const ZONES = [
-    { id: 'estanque',  name: 'Estanque',          cost: 0,     pull: 30,   bg: '#07131c', water: '#2f7fa8', shore: '#6b5b45', grass: '#3d6b3a',
+    { id: 'estanque',  name: 'Estanque',          cost: 0,     pull: 130,   bg: '#07131c', water: '#2f7fa8', shore: '#6b5b45', grass: '#3d6b3a',
       pool: ['gris', 'naranja', 'kohaku', 'shiro', 'ogon'] },
-    { id: 'nenufares', name: 'Nenúfares',         cost: 120,   pull: 120,  bg: '#07170f', water: '#2f9a78', shore: '#5d6b3a', grass: '#3f8a3a',
+    { id: 'nenufares', name: 'Nenúfares',         cost: 1800,   pull: 900,  bg: '#07170f', water: '#2f9a78', shore: '#5d6b3a', grass: '#3f8a3a',
       pool: ['musgo', 'asagi', 'sanke', 'shusui', 'kujaku'] },
-    { id: 'cascada',   name: 'Cascada',           cost: 500,   pull: 300,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
+    { id: 'cascada',   name: 'Cascada',           cost: 22000,   pull: 4500,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
       pool: ['plateada', 'benigoi', 'showa', 'platinum', 'tancho'] },
-    { id: 'cueva',     name: 'Cueva',             cost: 1500,  pull: 800,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
+    { id: 'cueva',     name: 'Cueva',             cost: 140000,  pull: 13000,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
       pool: ['ciega', 'cristal', 'brasa', 'fantasma', 'abisal'] },
-    { id: 'luna',      name: 'Lago de la Luna',   cost: 4000,  pull: 2000, bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
+    { id: 'luna',      name: 'Lago de la Luna',   cost: 450000,  pull: 31000, bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
       pool: ['rocio', 'lunar', 'kumonryu', 'medianoche', 'lunallena'] },
-    { id: 'templo',    name: 'Templo sumergido',  cost: 10000, pull: 5000, bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
+    { id: 'templo',    name: 'Templo sumergido',  cost: 1200000, pull: 62000, bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
       pool: ['piedra', 'jade', 'ambar', 'dragon', 'celestial'] },
-    { id: 'portal',    name: 'Portal',            cost: 25000, pull: 8000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
+    { id: 'portal',    name: 'Portal',            cost: 2600000, pull: 105000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
       pool: ['ceniza', 'magma', 'escarcha', 'hielo', 'nebulosa', 'estelar', 'estatica', 'glitch'] },
   ];
 
   // El portal conecta cada día con un mundo distinto, y solo trae las carpas de ese mundo.
-  // Se abre la primera media hora de cada hora par (las 0:00, las 2:00, las 4:00...).
+  // Se abre la primera media hora de cada hora (de y en punto a y media): así no se queda fuera quien juega a horas impares.
   const WORLDS = [
     { id: 'lava', name: 'Mundo de lava', color: '#ff6a2b', pool: ['ceniza', 'magma'] },
     { id: 'hielo', name: 'Mundo helado', color: '#9fe8ff', pool: ['escarcha', 'hielo'] },

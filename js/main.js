@@ -104,7 +104,7 @@
     S.seen = Date.now(); S.cam = { x: +cam.x.toFixed(1), y: +cam.y.toFixed(1), z: +cam.z.toFixed(2) };
     try {
       const out = { ...S,
-        carps: S.carps.map((c) => ({ sp: c.sp, hy: c.hy, hunger: c.hunger, xp: c.xp, x: c.x, y: c.y, pt: c.pt, bt: c.bt })),
+        carps: S.carps.map((c) => ({ sp: c.sp, hy: c.hy, hunger: c.hunger, xp: c.xp, x: c.x, y: c.y, pt: c.pt, bt: c.bt, pers: c.pers, made: c.made, born: c.born })),
         floating: S.floating.map((p) => ({ x: p.x, y: p.y, v: p.v })) };
       localStorage.setItem(SAVE_KEY, JSON.stringify(out));
     } catch { /* sin almacenamiento: se juega igual */ }
@@ -140,6 +140,7 @@
     return zi < MAIN && zi > 0 && S.unlocked[zi - 1] ? 1 : 0;
   }
   function waterAt(x, y, lim) { const q = MAP.sample(x, y); return q.r < lim && isOpen(q.z); }
+  const SWIM = 0.82;                     // por debajo de esta hondura (r) una carpa puede nadar
   const randomWaterPoint = (zi) => MAP.randomPoint(zi, 0.75);
   const zoneOf = (x, y) => { const z = MAP.zoneAt(x, y); return isOpen(z) ? z : 0; };
 
@@ -181,16 +182,15 @@
   const LAB_TIME = (z) => (DEMO !== null ? 3 : 20 * (Math.min(z, ZONES.length - 1) + 1)) * 1.5;      // segundos que tarda una mezcla
 
   // ───────────────────────── portal ─────────────────────────
-  // Abierto la primera media hora de cada hora par; cada día da a un mundo distinto.
+  // Abierto la primera media hora de cada hora; cada día da a un mundo distinto.
   const PORTAL = ZONES.findIndex((z) => z.portal);
   const worldToday = () => { const d = new Date(); return WORLDS[Math.floor((d.getTime() - d.getTimezoneOffset() * 60000) / 86400000) % WORLDS.length]; };
   function portalOpen() {
     if (FAST || DEMO !== null) return true;
-    const d = new Date(); return d.getHours() % 2 === 0 && d.getMinutes() < 30;
+    return new Date().getMinutes() < 30;          // la primera media hora de cada hora
   }
   function portalNext() {                            // hora a la que vuelve a abrir, como texto
-    const h = new Date().getHours();
-    return `${(h % 2 === 0 ? h + 2 : h + 1) % 24}:00`;
+    return `${(new Date().getHours() + 1) % 24}:00`;
   }
 
   // ───────────────────────── carpas ─────────────────────────
@@ -203,13 +203,39 @@
     c.spine = [];
     for (let i = 0; i < M; i++) c.spine.push({ x: c.x - Math.cos(c.ang) * sl * i, y: c.y - Math.sin(c.ang) * sl * i });
   }
+  // ── carácter y casa de cada carpa ──
+  // Cada especie tiene su casa: la zona de su nenúfar (las de los secretos, su rincón; las del laboratorio, la de
+  // su fórmula; las crías, la de sus padres) y prefiere estar allí. Además, a cada carpa le toca un carácter al nacer.
+  //   home / near / far: cuánto le tira su casa, las zonas vecinas a su casa y las demás · stay: ganas de quedarse donde está
+  //   speed: lo rápida que nada · rt: cada cuántos segundos cambia de rumbo dentro de una zona
+  const PERS = {
+    casera:      { name: 'casera',      w: 3, home: 10, near: 0.6, far: 0.12, stay: 3,   speed: 0.95, rt: [5, 10], desc: 'casi nunca sale de su zona' },
+    exploradora: { name: 'exploradora', w: 2, home: 3,  near: 2,   far: 1.6,  stay: 0.7, speed: 1.12, rt: [3, 6],  desc: 'recorre todo el lago y vuelve de vez en cuando' },
+    sociable:    { name: 'sociable',    w: 2, home: 6,  near: 1,   far: 0.35, stay: 1.5, speed: 1,    rt: [2, 4],  desc: 'nada en grupo con las de su especie' },
+    timida:      { name: 'tímida',      w: 2, home: 8,  near: 0.5, far: 0.1,  stay: 2.5, speed: 0.9,  rt: [5, 9],  desc: 'va por la orilla y se esconde bajo los nenúfares' },
+    glotona:     { name: 'glotona',     w: 2, home: 6,  near: 1,   far: 0.4,  stay: 1.5, speed: 1.05, rt: [3, 7],  desc: 'huele la comida desde muy lejos' },
+  };
+  const HOME_BONUS = 1.2;                // una carpa en su casa da un 20 % más de perlas
+  function rollPers() {
+    const ks = Object.keys(PERS), tot = ks.reduce((a, k) => a + PERS[k].w, 0);
+    let r = Math.random() * tot; for (const k of ks) { r -= PERS[k].w; if (r <= 0) return k; }
+    return ks[0];
+  }
+  function homeOf(c) {
+    if (c.hy) return clamp(c.hy.z || 0, 0, MAIN - 1);
+    const k = SECRETS.findIndex((sc) => sc.species === c.sp); if (k >= 0) return MAIN + k;
+    const rec = RECIPES.find((rr) => rr.sp === c.sp); if (rec) return Math.max(0, ZONES.findIndex((z) => z.pool.includes(rec.a)));
+    return Math.max(0, ZONES.findIndex((z) => z.pool.includes(c.sp)));
+  }
+  const atHome = (c) => !c.fortune && zoneOf(c.x, c.y) === c.home;
   function initCarp(c) {
     // fuera del agua (partida vieja, o el mapa ha cambiado): a su zona, o al estanque del centro
-    if (c.x == null || !waterAt(c.x, c.y, 0.85)) [c.x, c.y] = randomWaterPoint(c.x == null ? 0 : zoneOf(c.x, c.y));
+    if (c.x == null || !waterAt(c.x, c.y, SWIM - 0.04)) [c.x, c.y] = randomWaterPoint(c.x == null ? 0 : zoneOf(c.x, c.y));
     c.ang = Math.random() * Math.PI * 2;
     c.tx = c.x; c.ty = c.y; c.retarget = 0; c.speed = 0; c.route = []; c.chaseP = null;
     c.phase = Math.random() * 6;
     if (c.pt == null) c.pt = rnd(6, 14);
+    if (!c.fortune) { if (!PERS[c.pers]) c.pers = rollPers(); c.home = homeOf(c); c.made = c.made || 0; if (!c.born) c.born = Date.now(); c.away = 0; }
     resetSpine(c);
     return c;
   }
@@ -224,7 +250,8 @@
   let offline = 0;
   S.carps.forEach((c) => {
     const rate = HUNGER_RATE * 0.5, fed = c.hunger > 30 ? Math.min(AWAY, (c.hunger - 30) / rate) : 0;
-    offline += Math.floor((fed + (AWAY - fed) * AWAY_RATE) / PERLA_EVERY) * perlaValue(c);
+    const got = Math.floor((fed + (AWAY - fed) * AWAY_RATE) / PERLA_EVERY) * perlaValue(c);
+    offline += got; c.made = (c.made || 0) + got;
     c.hunger = Math.max(Math.min(c.hunger, 15), c.hunger - AWAY * rate);
   });
   S.perlas += offline;
@@ -232,7 +259,8 @@
 
   // soltar una carpa al río: devuelve parte de lo que costó su huevo, más cuanto más grande y rara
   const zoneOfSpecies = (c) => (c.hy ? c.hy.z : SPECIES[c.sp] && SPECIES[c.sp].lab ? 5 : Math.max(0, ZONES.findIndex((z) => z.pool.includes(c.sp))));
-  const releaseValue = (c) => Math.max(1, Math.round(ZONES[Math.min(ZONES.length - 1, zoneOfSpecies(c))].pull * (0.2 + 0.1 * stageOf(c.xp)) * Math.sqrt(RARITY[spOf(c).r].mult)));
+  // nunca más de lo que costó su tirada (como mucho un 60 %, una mítica enorme): si no, tirar, criar y soltar daría perlas sin fin
+  const releaseValue = (c) => Math.max(1, Math.round(ZONES[Math.min(ZONES.length - 1, zoneOfSpecies(c))].pull * (0.1 + 0.05 * stageOf(c.xp)) * (1 + spOf(c).r * 0.25)));
 
   // ───────────────────────── mundo ─────────────────────────
   let t = 0;                 // segundos de juego
@@ -373,12 +401,17 @@
   function paintGround() {
     if (camDirty) buildCells();
     const d = img.data, md = maskImg.data, u = U(), st = ZINFO.map((_, i) => status(i));
+    // un secreto sin descubrir junto a una zona abierta no es niebla: es el bosque (o la roca) de esa zona, y su agua queda tapada
+    const hid = ZINFO.map((_, i) => hiddenSecret(i));
     for (let x = 0; x < GW; x++) sinX[x] = Math.sin((cam.x + (x + 0.5 - GW / 2) / u) * 0.23 - t * 0.28);
     for (let y = 0; y < GH; y++) sinY[y] = Math.sin((cam.y + (y + 0.5 - GH / 2) / u) * 0.27 + t * 0.35);
     for (let y = 0; y < GH; y++) {
       const yv = cam.y + (y + 0.5 - GH / 2) / u, ay = sinY[y] * 2.1;
       for (let x = 0; x < GW; x++) {
-        const n = y * GW + x, i = n * 4, h = hArr[n], zi = zIdx[n], z2 = z2Arr[n], w = wArr[n], r = rArr[n];
+        const n = y * GW + x, i = n * 4, h = hArr[n], w = wArr[n];
+        let zi = zIdx[n], z2 = z2Arr[n], r = rArr[n];
+        if (hid[zi]) { zi = MAP.Z[zi].parent; if (r < 1.05) r = 1.05; }
+        if (hid[z2]) z2 = MAP.Z[z2].parent;
         const k = FOGK[st[zi]] * w + FOGK[st[z2]] * (1 - w);
         let R, G, B;
         if (k < 0.07) {                                     // niebla
@@ -402,9 +435,13 @@
             }
           } else if (r < 1.0) {
             const foam = 0.25 + 0.2 * Math.sin(t * 1.6 + xv * 0.7 + yv * 0.5), m = 0.75 + 0.5 * h, f = 255 * foam * 0.3;
-            R = z.shore[0] * m + f; G = z.shore[1] * m + f; B = z.shore[2] * m + f;
+            let sh = z.shore;
+            if (w < 0.999) { const zb = ZC[z2].shore; for (let c = 0; c < 3; c++) tmpDeep[c] = zb[c] + (sh[c] - zb[c]) * w; sh = tmpDeep; }   // la orilla también se funde entre zonas
+            R = sh[0] * m + f; G = sh[1] * m + f; B = sh[2] * m + f;
           } else {
-            const rock = h2Arr[n] > 0.82, m = (rock ? 0.55 : 0.28) + 0.35 * h, base = rock ? z.shore : z.grass;
+            const rock = h2Arr[n] > 0.82, m = (rock ? 0.55 : 0.28) + 0.35 * h;
+            let base = rock ? z.shore : z.grass;
+            if (w < 0.999) { const zb = rock ? ZC[z2].shore : ZC[z2].grass; for (let c = 0; c < 3; c++) tmpDeep[c] = zb[c] + (base[c] - zb[c]) * w; base = tmpDeep; }   // y la tierra
             R = base[0] * m; G = base[1] * m; B = base[2] * m;
           }
           R = R * k + 6 * (1 - k); G = G * k + 9 * (1 - k); B = B * k + 13 * (1 - k);
@@ -1135,7 +1172,7 @@
   }
 
   // ───────────────────────── tesoros y secretos ─────────────────────────
-  const TREASURE_REWARD = [80, 160, 260, 420, 700, 1100];
+  const TREASURE_REWARD = [640, 1280, 2080, 3360, 5600, 8800];
   const TREASURE_TEXT = {
     cofre: 'un cofre lleno de perlas',
     tortuga: 'la tortuga mira hacia el sur, hacia unas cañas',
@@ -1195,6 +1232,39 @@
     toast(`${MAP.TREASURES.find((o) => o.id === T.id).name}: ${TREASURE_TEXT[T.id]} · +${fmt(v)} perlas`, '#ffd23f', 4200);
     SOUND.coins(5); refreshHud(); save();
   }
+  // un secreto escondido: aún sin descubrir, y la zona de la que cuelga ya está abierta
+  const hiddenSecret = (i) => i >= MAIN && !isOpen(i) && isOpen(MAP.Z[i].parent);
+  // matorral (o rocas, en la cueva) encima del agua de cada secreto, para que no se vea ni su forma
+  const coverCache = {}, revealAt = {};
+  function coverOf(i) {
+    // árboles y matas como los del bosque de alrededor (mismos tamaños, sin amontonarse) sobre todo el rincón:
+    // su agua y también su tierra, que si no quedaría como un claro pelado
+    if (coverCache[i]) return coverCache[i];
+    const b = MAP.bbox(i), cand = [], out = [];
+    for (let y = b[1]; y < b[3]; y += 2.5) for (let x = b[0]; x < b[2]; x += 2.5) {
+      const jx = x + (hash(x, y) - 0.5) * 2, jy = y + (hash(y, x) - 0.5) * 2;
+      if (MAP.sample(jx, jy).z === i) cand.push({ x: jx, y: jy, k: hash(jx * 1.3, jy * 0.7) });
+    }
+    cand.sort((p, q) => p.k - q.k);
+    const fits = (o, gap) => out.every((p) => Math.hypot(p.x - o.x, p.y - o.y) > p.r + o.r + gap);
+    cand.forEach((c) => { const o = { x: c.x, y: c.y, r: 3.6 + c.k * 2.4, p: c.k * 6 }; if (fits(o, 5)) out.push(o); });     // árboles, con aire entre ellos
+    cand.forEach((c, n) => { const o = { x: c.x, y: c.y, r: 1.5 + c.k, p: c.k * 6 }; if (n % 3 === 0 && fits(o, 2.5)) out.push(o); });   // alguna mata suelta
+    return (coverCache[i] = out);
+  }
+  function drawSecretCover(i) {
+    const hidden = hiddenSecret(i), since = revealAt[i] != null ? t - revealAt[i] : 99;
+    if (!hidden && since > 1.6) return;
+    const par = MAP.Z[i].parent, cave = ['cueva', 'gruta'].includes(ZINFO[par].id), k = hidden ? 0 : since / 1.6;   // k: cómo se aparta al descubrirlo
+    const z = MAP.Z[i];
+    g.globalAlpha = 1 - k;
+    coverOf(i).forEach((o) => {
+      const dx = o.x - z.x, dy = o.y - z.y, l = Math.hypot(dx, dy) || 1, x = o.x + dx / l * k * 8, y = o.y + dy / l * k * 8;
+      if (cave) rock(x, y, o.r * 0.85 * (1 - k * 0.5), hash(o.p, 3), stoneOf(ZINFO[par].id));
+      else tree(x, y, o.r * (1 - k * 0.4), treeColors[par], Math.sin(t * 0.8 + o.p) * 0.3);
+    });
+    g.globalAlpha = 1;
+    if (hidden && light.night > 0.3) fireflies(z.x, z.y, z.rx * 0.4, z.ry * 0.4, 2, '200,170,255', 9 + i);   // de noche, un par de luciérnagas delatan el rincón
+  }
   // los secretos: un destello en la entrada del pasadizo da la pista; tocarlo lo descubre
   function secretHint(i) {
     const z = MAP.Z[i], [ex, ey] = z.path[0], k = Math.sin(t * 2.2 + i);
@@ -1202,7 +1272,7 @@
   }
   function discover(i) {
     const z = MAP.Z[i], info = ZINFO[i];
-    S.secrets[z.id] = true; camDirty = true;
+    S.secrets[z.id] = true; camDirty = true; revealAt[i] = t;
     const [x, y] = MAP.randomPoint(i, 0.7);
     S.carps.push(initCarp({ sp: info.species, hunger: 90, xp: STAGE_XP[2], x, y }));
     S.album[info.species] = (S.album[info.species] || 0) + 1;
@@ -1244,7 +1314,7 @@
   function shooHeron() {
     if (!heron || heron.state === 'out') return;
     heron.state = 'out'; heron.t0 = t; heron.fx = heron.x * 2 - heron.fx; heron.fy = heron.y * 2 - heron.fy;
-    const v = 15 * openMain();
+    const v = 120 * openMain();
     S.perlas += v; toast(`garza espantada · +${v} perlas`, '#e8e8e8', 1600);
     SOUND.shoo(); quest('heron'); refreshHud();
   }
@@ -1467,14 +1537,55 @@
   }
 
   // ───────────────────────── lógica ─────────────────────────
-  // destino al azar: casi siempre en la misma zona; a veces se va a otra
+  // adónde ir: una zona según su casa, su carácter y la hora (cuanto más tiempo lleva fuera, más ganas de volver),
+  // y un sitio de esa zona según lo que le gusta
   function pickWander(c) {
-    const zc = zoneOf(c.x, c.y), open = [];
-    for (let i = 0; i < NZ; i++) if (isOpen(i) && i !== zc) open.push(i);
-    const zt = open.length && Math.random() < 0.22 ? open[Math.floor(Math.random() * open.length)] : zc;
-    [c.tx, c.ty] = randomWaterPoint(zt);
+    const zc = zoneOf(c.x, c.y);
+    if (c.fortune) {                                                // la de la fortuna va a su aire, como antes
+      const open = []; for (let i = 0; i < NZ; i++) if (isOpen(i) && i !== zc) open.push(i);
+      const zt = open.length && Math.random() < 0.22 ? open[Math.floor(Math.random() * open.length)] : zc;
+      [c.tx, c.ty] = randomWaterPoint(zt); c.route = routeTo(zc, zt); c.retarget = zt === zc ? rnd(3, 7) : rnd(16, 30); return;
+    }
+    const P = PERS[c.pers] || PERS.casera, home = isOpen(c.home) ? c.home : 0, night = light.night > 0.5;
+    const shy = ['cueva', 'gruta'].includes(ZINFO[home].id);       // las de la cueva no salen de día; de noche, algo más
+    const ws = []; let tot = 0;
+    for (let i = 0; i < NZ; i++) {
+      let w = 0;
+      if (isOpen(i)) {
+        w = i === home ? P.home * (1 + (c.away || 0) / 90) : MAP.adj[home].includes(i) ? P.near : P.far;
+        if (i === zc) w *= P.stay;
+        if (shy && i !== home) w *= night ? 2 : 0.08;
+      }
+      ws.push(w); tot += w;
+    }
+    let roll = Math.random() * tot, zt = zc;
+    for (let i = 0; i < NZ; i++) { if (!ws[i]) continue; roll -= ws[i]; if (roll <= 0) { zt = i; break; } }
+    [c.tx, c.ty] = spotFor(c, zt, zt === home);
     c.route = routeTo(zc, zt);
-    c.retarget = zt === zc ? rnd(3, 7) : rnd(16, 30);
+    c.retarget = zt === zc ? rnd(P.rt[0], P.rt[1]) : rnd(16, 30);
+  }
+  // el sitio dentro de la zona
+  function spotFor(c, zi, home) {
+    const id = ZINFO[zi].id, ok = (p) => waterAt(p[0], p[1], 0.75);
+    if (c.pers === 'sociable') {                                   // junto a otra de su especie que ande por esa zona
+      const mates = S.carps.filter((o) => o !== c && o.sp === c.sp && zoneOf(o.x, o.y) === zi);
+      if (mates.length) { const o = mates[Math.floor(Math.random() * mates.length)], p = [o.x + rnd(-6, 6), o.y + rnd(-6, 6)]; if (ok(p)) return p; }
+    }
+    if (home) {
+      if (id === 'templo') {                                         // dan vueltas alrededor de la pirámide
+        const T = MAP.ISLANDS[zi].find((is) => is.temple);
+        if (T) { c.orbit = (c.orbit == null ? Math.random() * 6.28 : c.orbit) + 0.8; for (const rr of [32, 38, 27]) { const p = [T.x + Math.cos(c.orbit) * rr, T.y + Math.sin(c.orbit) * rr * 0.85]; if (ok(p)) return p; } }
+      }
+      if (id === 'luna' && light.night > 0.5 && Math.random() < 0.7) { const Mo = moonPos(zi), p = [Mo.x + rnd(-12, 12), Mo.y0 + Mo.h + rnd(-8, 8)]; if (ok(p)) return p; }   // bajo el reflejo de la luna
+      if (id === 'cascada' && SPOT.fall && Math.random() < 0.5) { const p = [SPOT.fall[0] + rnd(-10, 10), SPOT.fall[1] + rnd(14, 26)]; if (ok(p)) return p; }   // donde cae el agua
+      if (id === 'portal' && portalOpen() && Math.random() < 0.6) { const Po = portalPos(zi), p = [Po.x + rnd(-14, 14), Po.y0 + Po.h + rnd(-8, 8)]; if (ok(p)) return p; }   // junto al anillo abierto
+    }
+    if (c.pers === 'timida') {                                     // por la orilla o bajo un nenúfar
+      const pads = PAD_ZONES[id] ? padsOf(zi) : [];
+      if (pads.length && Math.random() < 0.5) { const q = pads[Math.floor(Math.random() * pads.length)]; if (ok([q.x, q.y])) return [q.x, q.y]; }
+      for (let k = 0; k < 30; k++) { const p = randomWaterPoint(zi); if (MAP.sample(p[0], p[1]).r > 0.45) return p; }
+    }
+    return randomWaterPoint(zi);
   }
 
   function updateMovement(c, dt) {
@@ -1483,10 +1594,10 @@
     let flee = null;
     if (heron && heron.state === 'stand' && !c.fortune) {
       const d = Math.hypot(c.x - heron.x, c.y - heron.y);
-      if (d < 26) flee = Math.atan2(c.y - heron.y, c.x - heron.x);
+      if (d < (c.pers === 'timida' ? 38 : 26)) flee = Math.atan2(c.y - heron.y, c.x - heron.x);
     }
     // olfatea comida cercana
-    let target = null, best = DETECT;
+    let target = null, best = DETECT * (c.pers === 'glotona' ? 1.6 : 1);
     if (c.hunger < 90 && !c.fortune) pellets.forEach((p) => { const d = Math.hypot(p.x - c.x, p.y - c.y); if (d < best) { best = d; target = p; } });
     // si no hay comida, sigue al dedo
     let luring = false;
@@ -1518,9 +1629,10 @@
       c.ang += (l && !r ? -1 : r && !l ? 1 : c.avoid || (c.avoid = Math.random() < 0.5 ? -1 : 1)) * 3.4 * dt;
     } else c.avoid = 0;
     const near = luring ? clamp(Math.hypot(tx - c.x, ty - c.y) / 8, 0.25, 1) : 1;      // junto al dedo, se calma
-    c.speed = (4.2 + stage * 0.5) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 1.9 : 1) * near * (flee !== null ? 1.8 : 1) * (c.fortune ? 1.2 : 1);
+    c.speed = (4.2 + stage * 0.5) * (c.hunger < 20 ? 0.5 : 1) * (c.chasing ? 1.9 : 1) * near * (flee !== null ? 1.8 : 1) * (c.fortune ? 1.2 : (PERS[c.pers] || PERS.casera).speed);
     const nx = c.x + Math.cos(c.ang) * c.speed * dt, ny = c.y + Math.sin(c.ang) * c.speed * dt;
-    if (waterAt(nx, ny, 0.82)) { c.x = nx; c.y = ny; }
+    if (waterAt(nx, ny, SWIM)) { c.x = nx; c.y = ny; }
+    else if (!waterAt(c.x, c.y, SWIM) && MAP.sample(nx, ny).r < MAP.sample(c.x, c.y).r) { c.x = nx; c.y = ny; }   // atascada en el borde: puede salir hacia agua más honda
     else { c.ang += Math.PI * 0.6; c.route = []; c.chaseP = null; c.retarget = 0; }      // choca con la orilla: replanifica
     c.phase += dt * (3.5 + c.speed * 0.7);
     const sl = lenC(c) / (M - 1);
@@ -1548,7 +1660,9 @@
   function spawnPerla(c) {
     const lim = 8 + 4 * openMain();
     if (S.floating.length >= lim) S.perlas += S.floating.shift().v;
-    S.floating.push({ x: c.x, y: c.y, v: perlaValue(c) });
+    const v = Math.round(perlaValue(c) * (atHome(c) ? HOME_BONUS : 1));
+    c.made = (c.made || 0) + v;
+    S.floating.push({ x: c.x, y: c.y, v });
     ripple(c.x, c.y, true);
   }
 
@@ -1678,7 +1792,10 @@
     let full = false, v = 0;
     if (S.carps.length >= capacity()) { full = true; v = releaseValue({ sp: id, xp: 0 }); S.perlas += v; }
     else {
-      let x = pad.x, y = pad.y + 13; if (!waterAt(x, y, 0.88)) { x = pad.x; y = pad.y; }
+      // sale junto al nenúfar, en agua donde se pueda nadar (por debajo de SWIM: si no, se queda atascada en el borde)
+      let x = pad.x, y = pad.y + 13;
+      for (let k = 0; k < 16 && !waterAt(x, y, SWIM - 0.04); k++) { const a = Math.PI / 2 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.4; x = pad.x + Math.cos(a) * 13; y = pad.y + Math.sin(a) * 13; }
+      if (!waterAt(x, y, SWIM - 0.04)) [x, y] = randomWaterPoint(zi);
       const c = initCarp({ sp: id, hunger: 60, xp: 0, x, y }); c.ang = Math.PI / 2; resetSpine(c); S.carps.push(c);
     }
     const k = S.gacha.out.findIndex((o) => o.id === id && o.zi === zi); if (k >= 0) S.gacha.out.splice(k, 1);
@@ -1857,7 +1974,7 @@
 
   // ── encargos del día ──
   const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
-  const questReward = () => Math.round(40 * Math.pow(openMain(), 1.6) + 20);
+  const questReward = () => Math.round(200 * Math.pow(openMain(), 1.8) + 100);
   function ensureQuests() {
     const day = todayKey();
     if (S.quests && S.quests.day === day) return;
@@ -1893,6 +2010,7 @@
     }
     S.carps.forEach((c) => {
       c.hunger = Math.max(0, c.hunger - HUNGER_RATE * dt);
+      if (!c.fortune) c.away = atHome(c) ? 0 : (c.away || 0) + dt;
       if (c.hunger > 30) c.pt -= dt;
       if (c.pt <= 0) { c.pt = rnd(PERLA_EVERY - 4, PERLA_EVERY + 4); spawnPerla(c); }
       updateMovement(c, dt);
@@ -1996,7 +2114,7 @@
     const cell = Math.max(MIN_CELL, Math.sqrt(W * H / MAX_CELLS)) * quality;
     cellDev = Math.max(3, Math.round(cell * dpr));
     cellCss = cellDev / dpr;
-    GW = Math.ceil(W / cellCss); GH = Math.ceil(H / cellCss);
+    GW = Math.max(1, Math.ceil(W / cellCss)); GH = Math.max(1, Math.ceil(H / cellCss));      // nunca 0: con la ventana a cero de ancho (pestaña oculta) el juego no arrancaba
     canvas.width = GW * cellDev; canvas.height = GH * cellDev;
     canvas.style.width = canvas.width / dpr + 'px'; canvas.style.height = canvas.height / dpr + 'px';
     src.width = GW; src.height = GH;
@@ -2093,6 +2211,7 @@
 
     // 3) lo que flota o sobresale: nenúfares, copas, rocas, cascada, tesoros, barreras
     shown.forEach((zi) => { if (PAD_ZONES[ZINFO[zi].id]) drawPads(padsOf(zi)); landscapeTop(zi); const top = DECOR_TOP[ZINFO[zi].id]; if (top) top(zi); drawGachaPad(zi); });
+    for (let i = MAIN; i < NZ; i++) if (isOpen(MAP.Z[i].parent)) drawSecretCover(i);
     MAP.TREASURES.forEach((T) => { if (isOpen(T.z) && seen(T.x, T.y, 12)) drawTreasure(T, true); });
     drawBarriers();
 
@@ -2343,6 +2462,71 @@
   const card = (sp, nm, extra) => `<div class="card"><div class="spr">${spriteHtml(sp)}</div><div class="nm">${nm}</div><div class="nm" style="color:${RARITY[sp.r].c}">${RARITY[sp.r].n}${extra || ''}</div></div>`;
   const cardOff = (r) => `<div class="card off"><div class="spr">??????</div><div class="nm">???</div><div class="nm">${RARITY[r].n}</div></div>`;
   const dots = (n, max) => '●'.repeat(n) + '○'.repeat(max - n);
+  // piezas comunes de los menús: cabecera, barra de progreso (con su color) y puntos de nivel
+  const head = (title, sub) => `<div class="ghd"><div class="gnm">${title}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+  const pbar = (pct, col) => `<div class="pbar"${col ? ` style="--c:${col}"` : ''}><i style="width:${clamp(pct, 0, 100).toFixed(1)}%"></i></div>`;
+  const pips = (n, max) => `<span class="pips">${'●'.repeat(n)}<span class="no">${'●'.repeat(max - n)}</span></span>`;
+  const MENU_COLOR = { map: '#7ec8e3', album: '#ffd23f', upgrades: '#7bdc6a', quests: '#f4a261', lab: '#7bffcf', labpick: '#7bffcf' };
+  // de dónde sale una especie (para las que aún no tienes)
+  function whereFrom(id) {
+    const z = ZONES.findIndex((zz) => zz.pool.includes(id));
+    if (z === PORTAL) { const w = WORLDS.find((ww) => ww.pool.includes(id)); return `sale en el Portal · ${w ? w.name.toLowerCase() : 'otro mundo'}`; }
+    if (z >= 0) return `sale en ${ZONES[z].name}`;
+    if (SECRETS.some((sc) => sc.species === id)) return 'vive en un rincón secreto';
+    const r = RECIPES.find((rr) => rr.sp === id); if (r) return r.hint;
+    return '???';
+  }
+  function albumCard(id, sp) {
+    const n = S.album[id], col = RARITY[sp.r].c;
+    if (!n) return `<div class="acard off"><div class="spr">${SPRITE}</div><div class="nm">???</div><div class="sub">${whereFrom(id)}</div></div>`;
+    return `<div class="acard" style="--r:${col}"><div class="spr">${spriteHtml(sp)}</div><div class="nm">${sp.name}</div><div class="rr">${RARITY[sp.r].n}${n > 1 ? ` <span class="sub">×${n}</span>` : ''}</div></div>`;
+  }
+  let albumTab = null, albumMiss = false, mineSort = 'made', mineArm = null;
+  // «mis carpas»: todas las del estanque, con sus datos, ordenables; desde aquí se ven y se sueltan
+  const MINE_SORTS = [
+    { k: 'made', nm: 'más perlas', f: (c) => -(c.made || 0) },
+    { k: 'rate', nm: 'más rinden', f: (c) => -perlaValue(c) * (atHome(c) ? HOME_BONUS : 1) },
+    { k: 'rare', nm: 'rareza', f: (c) => -spOf(c).r * 100 - stageOf(c.xp) },
+    { k: 'size', nm: 'tamaño', f: (c) => -c.xp },
+    { k: 'old', nm: 'antigüedad', f: (c) => c.born || 0 },
+    { k: 'home', nm: 'casa', f: (c) => c.home * 10 + (atHome(c) ? 0 : 1) },
+  ];
+  const zoneNameOf = (zi) => (zi < MAIN ? ZONES[zi].name : SECRETS[zi - MAIN].name);
+  function mineHtml() {
+    const srt = MINE_SORTS.find((o) => o.k === mineSort) || MINE_SORTS[0];
+    const list = S.carps.slice().sort((a, b) => srt.f(a) - srt.f(b));
+    const podium = S.carps.slice().sort((a, b) => (b.made || 0) - (a.made || 0)).slice(0, 3).filter((c) => c.made > 0);
+    const total = S.carps.reduce((a, c) => a + (c.made || 0), 0), home = S.carps.filter(atHome).length;
+    let out = `<div class="note">${S.carps.length}/${capacity()} carpas · ${home} en su casa (dan un 20 % más) · ${fmt(total)} perlas entre todas</div>`;
+    if (podium.length) out += '<div class="podium">' + podium.map((c, i) => `<button class="pod p${i + 1}" data-seec="${S.carps.indexOf(c)}" style="--r:${RARITY[spOf(c).r].c}"><span class="pl">${i + 1}º</span><span class="spr">${spriteHtml(spOf(c))}</span><span class="nm">${spOf(c).name}</span><span class="sub">${fmt(c.made)} perlas</span></button>`).join('') + '</div>';
+    out += '<div class="tabs sorts">' + MINE_SORTS.map((o) => `<button class="${o.k === srt.k ? 'on' : ''}" data-msort="${o.k}">${o.nm}</button>`).join('') + '</div>';
+    out += '<div class="list">' + list.map((c) => {
+      const sp = spOf(c), k = S.carps.indexOf(c), col = RARITY[sp.r].c, st = stageOf(c.xp), inH = atHome(c), P = PERS[c.pers];
+      const last = S.carps.length <= 1, armed = mineArm === c;
+      return `<div class="item mine" style="--z:${col}"><pre>${spriteHtml(sp)}</pre>
+        <div><div class="nm">${sp.name}</div>
+          <div class="sub"><span style="color:${col}">${RARITY[sp.r].n}</span> · ${STAGE_NAMES[st]}${P ? ` · ${P.name}` : ''}</div>
+          <div class="sub">casa: ${zoneNameOf(c.home)}${inH ? ' · <span class="ok">en casa</span>' : ' · fuera'} · ${fmt(Math.round(perlaValue(c) * (inH ? HOME_BONUS : 1)))} cada ~${PERLA_EVERY} s</div></div>
+        <div class="act"><div class="big">${fmt(c.made || 0)}<span class="sub"> perlas</span></div>
+          <div class="btns"><button data-seec="${k}">ver</button><button class="danger ${armed ? 'armed' : ''}" data-relc="${k}" ${last ? 'disabled' : ''}>${armed ? `¿seguro? +${fmt(releaseValue(c))}` : 'soltar'}</button></div></div></div>`;
+    }).join('') + '</div>';
+    return out;
+  }
+  function releaseCarp(c) {
+    if (!c || S.carps.length <= 1 || !S.carps.includes(c)) return;
+    const v = releaseValue(c);
+    S.carps.splice(S.carps.indexOf(c), 1); S.perlas += v;
+    ripple(c.x, c.y, false); ripple(c.x, c.y, true);
+    if (selected === c) selected = null;
+    if (sheetCarp === c) sheetCarp = null;
+    toast(`${spOf(c).name} vuelve al río · +${fmt(v)} perlas`, RARITY[spOf(c).r].c, 2600);
+    refreshHud(); refreshInfo(); save();
+  }
+  // cuánto falta para los encargos de mañana (a medianoche)
+  function untilMidnight() {
+    const d = new Date(), m = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1) - d, h = Math.floor(m / 3600000), mi = Math.floor(m / 60000) % 60;
+    return h ? `${h} h ${mi} min` : `${mi} min`;
+  }
 
   const LAB_ART = '   _/\\_   \n  |[]  |~ \n  |__[]|  ';
   const TUBE_ART = '  |  |  \n  |~~|  \n  `--`  ';
@@ -2351,31 +2535,32 @@
     return `<button class="probeta" data-slot="${slot}">${c ? `<pre>${spriteHtml(sp)}</pre><span class="nm">${sp.name}</span><span class="sub">cambiar</span>` : `<pre>${TUBE_ART}</pre><span class="sub">elegir carpa</span>`}</button>`;
   }
   function labHtml() {
+    const found = RECIPES.filter((r) => S.album[r.sp]).length;
     if (!S.lab.built) {
-      return `<div class="zone-title">laboratorio</div><div class="row"><pre>${LAB_ART}</pre>
-        <div><div class="nm">Construir el laboratorio</div><div class="sub">mezcla dos carpas adultas</div></div>
-        <button data-build ${S.perlas < LAB.cost ? 'disabled' : ''}>${fmt(LAB.cost)} perlas</button></div>`;
+      const can = S.perlas >= LAB.cost;
+      return head('Laboratorio', 'mezcla dos carpas adultas') + `<div class="list"><div class="item"><pre>${LAB_ART}</pre><div><div class="nm">Construir el laboratorio</div>
+        <div class="sub">${can ? 'en el islote del Estanque' : `te faltan ${fmt(LAB.cost - S.perlas)} perlas`}</div></div>
+        <button class="${can ? 'main' : ''}" data-build ${can ? '' : 'disabled'}>construir · ${fmt(LAB.cost)}</button></div></div>`;
     }
     if (labA && !canMix(labA)) labA = null;
     if (labB && !canMix(labB)) labB = null;
     const mix = S.eggs.find((e) => e.lab);
-    let out = '<div class="zone-title">laboratorio</div>';
+    let out = head('Laboratorio', `fórmulas ${found}/${RECIPES.length}`);
     if (mix) {
       const left = Math.max(0, Math.ceil((mix.ready - Date.now()) / 1000)), name = mix.sp ? '???' : mix.hy.name;
       const total = LAB_TIME(mix.zone), pct = 100 - left / total * 100;
-      out += `<div class="row"><pre>${LAB_ART}</pre><div><div class="nm">mezclando · ${name}</div><div class="sub">${bar(pct)} ${left}s</div></div></div>`;
+      out += `<div class="list"><div class="item"><pre>${LAB_ART}</pre><div><div class="nm">mezclando · ${name}</div>${pbar(pct)}</div><span class="sub">${left} s</span></div></div>`;
     }
     out += `<div class="lab">${probeta('a', labA)}<div class="plus">+</div>${probeta('b', labB)}</div>`;
     if (labA && labB) {
-      const rec = recipeOf(labA, labB), cost = labCost(labA, labB);
+      const rec = recipeOf(labA, labB), cost = labCost(labA, labB), full = S.carps.length >= capacity(), can = !mix && !full && S.perlas >= cost;
       const what = rec ? (S.album[rec.sp] ? `saldrá: ${SPECIES[rec.sp].name}` : 'la mezcla burbujea de una forma rara...') : 'saldrá una cría con algo de cada una';
-      const full = S.carps.length >= capacity();
-      out += `<div class="note">${what}</div><button class="mix" data-mix ${mix || full || S.perlas < cost ? 'disabled' : ''}>${mix ? 'ya hay una mezcla en marcha' : full ? 'el estanque está lleno' : `mezclar · ${fmt(cost)} perlas`}</button>`;
-    } else out += '<div class="note">elige dos carpas adultas</div>';
-    out += `<div class="zone-title">fórmulas <span>${RECIPES.filter((r) => S.album[r.sp]).length}/${RECIPES.length}</span></div><div class="grid">` +
+      out += `<div class="note">${what}</div><div class="acts"><button class="${can ? 'main' : ''} mixb" data-mix ${can ? '' : 'disabled'}>${mix ? 'ya hay una mezcla en marcha' : full ? 'el estanque está lleno' : `mezclar · ${fmt(cost)}`}</button></div>`;
+    } else out += '<div class="note">toca una probeta y elige dos carpas adultas</div>';
+    out += `<div class="zone-title">fórmulas <span>${found}/${RECIPES.length}</span></div><div class="acards">` +
       RECIPES.map((r) => (S.album[r.sp]
-        ? `<div class="card"><div class="spr">${spriteHtml(SPECIES[r.sp])}</div><div class="nm">${SPECIES[r.sp].name}</div><div class="nm sub">${SPECIES[r.a].name} + ${SPECIES[r.b].name}</div></div>`
-        : `<div class="card off"><div class="spr">??????</div><div class="nm">${r.hint}</div></div>`)).join('') + '</div>';
+        ? `<div class="acard" style="--r:${RARITY[SPECIES[r.sp].r].c}"><div class="spr">${spriteHtml(SPECIES[r.sp])}</div><div class="nm">${SPECIES[r.sp].name}</div><div class="sub">${SPECIES[r.a].name} + ${SPECIES[r.b].name}</div></div>`
+        : `<div class="acard off"><div class="spr">${SPRITE}</div><div class="nm">???</div><div class="sub">${r.hint}</div></div>`)).join('') + '</div>';
     return out;
   }
 
@@ -2383,90 +2568,101 @@
     openPanel = kind;
     let html = '';
     if (kind === 'map') {
-      html = ZONES.map((z, i) => {
-        const open = S.unlocked[i], visible = open || S.unlocked[i - 1];
-        if (!visible) return '';
-        const art = visible ? ZONE_ART[i] : '???????\n???????\n???????';
-        let action = '';
-        if (open) action = `<button data-go="${i}">ir</button>`;
-        else if (visible) action = `<button data-buy="${i}" ${S.perlas < z.cost ? 'disabled' : ''}>${fmt(z.cost)} perlas</button>`;
-        const n = S.carps.filter((c) => MAP.zoneAt(c.x, c.y) === i).length;
-        return `<div class="row ${visible ? '' : 'locked'}"><pre>${art}</pre>
-          <div><div class="nm">${visible ? z.name : '???'}</div><div class="sub">${open ? n + ' carpas' : ''}</div></div>${action}</div>`;
-      }).join('') + (() => { const n = ZONES.filter((z, i) => !(S.unlocked[i] || S.unlocked[i - 1])).length; return n ? `<div class="note">${n} zonas más por descubrir</div>` : ''; })() + SECRETS.map((s, k) => {
+      const opened = ZONES.filter((z, i) => S.unlocked[i]).length;
+      html = head('Mapa', `${opened} de ${ZONES.length} zonas abiertas`) + '<div class="list">' + ZONES.map((z, i) => {
+        const open = S.unlocked[i], next = !open && S.unlocked[i - 1];
+        if (!open && !next) return '';
+        const col = GACCENT[z.id] || MENU_COLOR.map, got = z.pool.filter((id) => S.album[id]).length;
+        if (open) {
+          const n = S.carps.filter((c) => MAP.zoneAt(c.x, c.y) === i).length;
+          const extra = i === PORTAL ? (portalOpen() ? ` · abierto: ${worldToday().name.toLowerCase()}` : ` · abre a las ${portalNext()}`) : '';
+          return `<button class="item" data-go="${i}" style="--z:${col}"><pre>${ZONE_ART[i]}</pre>
+            <div><div class="nm">${z.name}</div><div class="sub">${n} ${n === 1 ? 'carpa' : 'carpas'} · especies ${got}/${z.pool.length}${extra}</div>${pbar(got / z.pool.length * 100, col)}</div><span class="go">ir</span></button>`;
+        }
+        const can = S.perlas >= z.cost;
+        return `<div class="item off" style="--z:${col}"><pre>${ZONE_ART[i]}</pre>
+          <div><div class="nm">${z.name}</div><div class="sub">${can ? 'ya puedes abrirla' : `te faltan ${fmt(z.cost - S.perlas)} perlas`}</div>${pbar(S.perlas / z.cost * 100, col)}</div>
+          <button class="${can ? 'main' : ''}" data-buy="${i}" ${can ? '' : 'disabled'}>abrir · ${fmt(z.cost)}</button></div>`;
+      }).join('') + SECRETS.map((sc, k) => {
         const i = MAIN + k, found = isOpen(i), near = isOpen(MAP.Z[i].parent);
         if (!found && !near) return '';
-        return `<div class="row ${found ? '' : 'locked'}"><pre>${found ? ZONE_ART[i] : '  ???  \n  ???  \n  ???  '}</pre>
-          <div><div class="nm">${found ? s.name : 'secreto'}</div><div class="sub">${found ? 'encontrado' : `algo se esconde cerca de ${ZONES[MAP.Z[i].parent].name}`}</div></div>${found ? `<button data-go="${i}">ir</button>` : ''}</div>`;
-      }).join('');
+        return found
+          ? `<button class="item" data-go="${i}" style="--z:#c9a0ff"><pre>${ZONE_ART[i]}</pre><div><div class="nm">${sc.name}</div><div class="sub">secreto encontrado</div></div><span class="go">ir</span></button>`
+          : `<div class="item off" style="--z:#c9a0ff"><pre>  ???  \n  ???  \n  ???  </pre><div><div class="nm">???</div><div class="sub">algo se esconde cerca de ${ZONES[MAP.Z[i].parent].name}</div></div><span></span></div>`;
+      }).join('') + '</div>';
+      const hidden = ZONES.filter((z, i) => !(S.unlocked[i] || S.unlocked[i - 1])).length;
+      if (hidden) html += `<div class="note">${hidden} ${hidden === 1 ? 'zona más' : 'zonas más'} por descubrir</div>`;
     } else if (kind === 'album') {
-      const total = Object.keys(SPECIES).length, got = Object.keys(S.album).filter((id) => SPECIES[id]).length;
-      html = `<div class="zone-title">álbum <span>${got}/${total}</span></div>` + ZONES.map((z, i) => {
-        if (!S.unlocked[i] && !S.unlocked[i - 1]) return '';
-        const gt = z.pool.filter((id) => S.album[id]).length;
-        return `<div class="zone-title">${z.name} <span>${gt}/${z.pool.length}</span></div><div class="grid">` +
-          z.pool.map((id) => (S.album[id] ? card(SPECIES[id], SPECIES[id].name, S.album[id] > 1 ? ' ×' + S.album[id] : '') : cardOff(SPECIES[id].r))).join('') + '</div>';
-      }).join('');
-      if (SECRETS.some((s, k) => isOpen(MAP.Z[MAIN + k].parent))) {
-        html += `<div class="zone-title">secretos <span>${SECRETS.filter((s) => S.album[s.species]).length}/${SECRETS.length}</span></div><div class="grid">` +
-          SECRETS.map((s) => (S.album[s.species] ? card(SPECIES[s.species], SPECIES[s.species].name) : cardOff(SPECIES[s.species].r))).join('') + '</div>';
-      }
-      if (S.lab.built) html += `<div class="zone-title">laboratorio <span>${RECIPES.filter((r) => S.album[r.sp]).length}/${RECIPES.length}</span></div><div class="grid">` +
-        RECIPES.map((r) => (S.album[r.sp] ? card(SPECIES[r.sp], SPECIES[r.sp].name, S.album[r.sp] > 1 ? ' ×' + S.album[r.sp] : '') : cardOff(SPECIES[r.sp].r))).join('') + '</div>';
+      const all = Object.keys(SPECIES), got = all.filter((id) => S.album[id]).length;
+      const tabs = [{ k: 'mine', nm: 'mis carpas', ids: [], mine: true }];
+      ZONES.forEach((z, i) => { if (S.unlocked[i] || S.unlocked[i - 1]) tabs.push({ k: 'z' + i, nm: z.name, ids: z.pool }); });
+      if (SECRETS.some((sc, k) => isOpen(MAP.Z[MAIN + k].parent))) tabs.push({ k: 'sec', nm: 'secretos', ids: SECRETS.map((sc) => sc.species) });
+      if (S.lab.built) tabs.push({ k: 'lab', nm: 'laboratorio', ids: RECIPES.map((r) => r.sp) });
       const hy = Object.entries(S.hybrids);
-      if (hy.length) html += `<div class="zone-title">crías <span>${hy.length}</span></div><div class="grid">` + hy.map(([n, h]) => card(h, n, h.n > 1 ? ' ×' + h.n : '')).join('') + '</div>';
+      if (hy.length) tabs.push({ k: 'hy', nm: 'crías', ids: [] });
+      if (!tabs.some((tb) => tb.k === albumTab)) albumTab = 'mine';
+      const cur = tabs.find((tb) => tb.k === albumTab);
+      html = head('Álbum', `${got} de ${all.length} especies`) + pbar(got / all.length * 100);
+      html += '<div class="tabs">' + tabs.map((tb) => {
+        const g2 = tb.ids.filter((id) => S.album[id]).length;
+        return `<button class="${tb.k === albumTab ? 'on' : ''}" data-atab="${tb.k}">${tb.nm}${tb.mine ? ` ${S.carps.length}` : tb.ids.length ? ` ${g2}/${tb.ids.length}` : ` ${hy.length}`}</button>`;
+      }).join('') + (albumTab === 'mine' ? '' : `<button class="${albumMiss ? 'on' : ''}" data-amiss>me faltan</button>`) + '</div>';
+      if (cur.k === 'mine') html += mineHtml();
+      else if (cur.k === 'hy') html += '<div class="acards">' + hy.map(([n, h]) => `<div class="acard" style="--r:${RARITY[h.r].c}"><div class="spr">${spriteHtml(h)}</div><div class="nm">${n}</div><div class="rr">${RARITY[h.r].n}${h.n > 1 ? ` <span class="sub">×${h.n}</span>` : ''}</div></div>`).join('') + '</div>';
+      else {
+        const ids = cur.ids.filter((id) => !albumMiss || !S.album[id]);
+        html += ids.length ? '<div class="acards">' + ids.map((id) => albumCard(id, SPECIES[id])).join('') + '</div>' : '<div class="note">las tienes todas</div>';
+      }
     } else if (kind === 'gacha') {
       html = gachaHtml();
     } else if (kind === 'upgrades') {
-      html = `<div class="zone-title">mejoras</div><div class="row"><pre class="lv">${S.lab.built ? ' ok ' : '    '}</pre>
-          <div><div class="nm">Laboratorio</div><div class="sub">${S.lab.built ? '' : 'mezcla carpas'}</div></div>
-          <button data-openlab ${!S.lab.built && S.perlas < LAB.cost ? 'disabled' : ''}>${S.lab.built ? 'abrir' : fmt(LAB.cost) + ' perlas'}</button></div>` + UPGRADES.map((u) => {
-        const n = lvl(u.id), max = u.cost.length, next = n < max ? u.cost[n] : null;
-        return `<div class="row"><pre class="lv">${dots(n, max)}</pre>
-          <div><div class="nm">${u.name}</div><div class="sub">${next != null ? u.desc[n] : 'al máximo'}</div></div>
-          ${next != null ? `<button data-up="${u.id}" ${S.perlas < next ? 'disabled' : ''}>${fmt(next)} perlas</button>` : ''}</div>`;
-      }).join('');
+      html = head('Mejoras', `${fmt(S.perlas)} perlas`) + '<div class="list">';
+      html += S.lab.built
+        ? `<div class="item" style="--z:${MENU_COLOR.lab}"><pre>${LAB_ART}</pre><div><div class="nm">Laboratorio</div><div class="sub">mezcla dos carpas adultas</div></div><button class="main" data-openlab>abrir</button></div>`
+        : `<div class="item" style="--z:${MENU_COLOR.lab}"><pre>${LAB_ART}</pre><div><div class="nm">Laboratorio</div><div class="sub">${S.perlas >= LAB.cost ? 'mezcla dos carpas adultas' : `te faltan ${fmt(LAB.cost - S.perlas)} perlas`}</div></div><button class="${S.perlas >= LAB.cost ? 'main' : ''}" data-build ${S.perlas < LAB.cost ? 'disabled' : ''}>construir · ${fmt(LAB.cost)}</button></div>`;
+      html += UPGRADES.map((u) => {
+        const n = lvl(u.id), max = u.cost.length, next = n < max ? u.cost[n] : null, can = next != null && S.perlas >= next;
+        const now = n ? u.desc[n - 1] : 'sin mejorar';
+        const btn = next == null ? '<span class="sub">al máximo</span>'
+          : `<div class="act"><button class="${can ? 'main' : ''}" data-up="${u.id}" ${can ? '' : 'disabled'}>mejorar · ${fmt(next)}</button>${can ? '' : `<span class="sub">faltan ${fmt(next - S.perlas)}</span>`}</div>`;
+        return `<div class="item"><div>${pips(n, max)}</div>
+          <div><div class="nm">${u.name}</div><div class="sub">ahora: ${now}</div>${next != null ? `<div class="sub">nivel ${n + 1}: ${u.desc[n]}</div>` : ''}</div>${btn}</div>`;
+      }).join('') + '</div>';
     } else if (kind === 'quests') {
       ensureQuests();
-      html = `<div class="zone-title">encargos de hoy <span>+${fmt(S.quests.reward)} perlas cada uno</span></div>` + S.quests.list.map((q, i) => {
-        const def = QUESTS.find((x) => x.id === q.id), pct = q.p / q.n * 100;
-        const btn = q.got ? '<span class="sub">cobrado</span>' : q.done ? `<button data-claim="${i}">cobrar</button>` : '';
-        return `<div class="row"><pre class="lv">${q.done ? '  ok  ' : `${q.p}/${q.n}`}</pre>
-          <div><div class="nm">${def.text}</div><div class="sub">${bar(pct)}</div></div>${btn}</div>`;
-      }).join('');
+      const done = S.quests.list.filter((q) => q.got).length;
+      html = head('Encargos de hoy', `+${fmt(S.quests.reward)} perlas cada uno · ${done}/${S.quests.list.length} cobrados`) + '<div class="list">' + S.quests.list.map((q, i) => {
+        const def = QUESTS.find((x) => x.id === q.id), pct = Math.min(q.p, q.n) / q.n * 100;
+        const right = q.got ? '<span class="sub">cobrado</span>' : q.done ? `<button class="main" data-claim="${i}">cobrar</button>` : `<span class="sub">${Math.min(q.p, q.n)}/${q.n}</span>`;
+        return `<div class="item ${q.got ? 'off' : ''}"><div>${q.done ? pips(1, 1) : pips(0, 1)}</div><div><div class="nm">${def.text}</div>${pbar(pct)}</div>${right}</div>`;
+      }).join('') + `</div><div class="note">encargos nuevos dentro de ${untilMidnight()}</div>`;
     } else if (kind === 'lab') {
       html = labHtml();
     } else if (kind === 'labpick') {
       const other = labSlot === 'a' ? labB : labA;
       const list = S.carps.filter((o) => o !== other && canMix(o));
-      html = `<div class="zone-title">probeta ${labSlot === 'a' ? 'A' : 'B'} <span>carpas adultas y descansadas</span></div>` + (list.length ? list.map((o) => {
-        const s2 = spOf(o), k = S.carps.indexOf(o);
-        return `<div class="row"><pre>${spriteHtml(s2)}</pre><div><div class="nm">${s2.name}</div><div class="sub" style="color:${RARITY[s2.r].c}">${RARITY[s2.r].n} · ${STAGE_NAMES[stageOf(o.xp)]}</div></div>
-          <button data-pick="${k}">elegir</button></div>`;
-      }).join('') : '<div class="note">no hay ninguna: tienen que crecer hasta adultas, y después de mezclar descansan 10 minutos</div>') + '<button class="back" data-labback>volver</button>';
+      html = head(`Probeta ${labSlot === 'a' ? 'A' : 'B'}`, 'carpas adultas y descansadas') + (list.length ? '<div class="list">' + list.map((o) => {
+        const s2 = spOf(o), k = S.carps.indexOf(o), col = RARITY[s2.r].c;
+        return `<button class="item" data-pick="${k}" style="--z:${col}"><pre>${spriteHtml(s2)}</pre><div><div class="nm">${s2.name}</div><div class="sub" style="color:${col}">${RARITY[s2.r].n} · ${STAGE_NAMES[stageOf(o.xp)]}</div></div><span class="go">elegir</span></button>`;
+      }).join('') + '</div>' : '<div class="note">no hay ninguna: tienen que crecer hasta adultas, y después de mezclar descansan 10 minutos</div>') + '<div class="acts"><button data-labback>volver</button></div>';
     } else if (kind === 'carp') {
       const c = sheetCarp;
       if (!c || !S.carps.includes(c)) { hide(); return; }
-      const sp = spOf(c), rar = RARITY[sp.r], st = stageOf(c.xp), zi = MAP.zoneAt(c.x, c.y);
-      {
-        const grow = st < STAGE_XP.length - 1
-          ? `<span class="sub">· ${STAGE_XP[st + 1] - c.xp} bolitas para crecer</span>` : '<span class="sub">· tamaño máximo</span>';
-        const last = S.carps.length <= 1, armed = releaseArm === c, v = releaseValue(c);
-        const label = last ? 'es tu única carpa' : armed ? `seguro? soltar · +${fmt(v)} perlas` : `soltar al río · +${fmt(v)} perlas`;
-        const rest = c.bt && c.bt > Date.now() ? Math.ceil((c.bt - Date.now()) / 60000) : 0;
-        const breedBtn = st < 2 ? '<span class="sub">cuando sea adulta</span>' : rest ? `<span class="sub">descansando · ${rest} min</span>` : '<button data-tolab>llevar al laboratorio</button>';
-        html = `<div class="carp">
-          <div class="carp-head"><div class="spr">${spriteHtml(sp)}</div>
-            <div><div class="nm">${sp.name}</div><div style="color:${rar.c}">${rar.n}${c.hy ? ' · cría' : ''}</div></div></div>
-          <dl class="facts">
-            <dt>tamaño</dt><dd>${STAGE_NAMES[st]} ${grow}</dd>
-            <dt>barriga</dt><dd>${bar(c.hunger)}${c.hunger < 30 ? ' <span class="sub">· con hambre no da perlas</span>' : ''}</dd>
-            <dt>perlas</dt><dd>${fmt(perlaValue(c))} cada ~${PERLA_EVERY} s</dd>
-            ${S.lab.built ? `<dt>mezcla</dt><dd>${breedBtn}</dd>` : ''}
-          </dl>
-          <button class="release ${armed ? 'armed' : ''}" data-release ${last ? 'disabled' : ''}>${label}</button>
-        </div>`;
-      }
+      const sp = spOf(c), rar = RARITY[sp.r], st = stageOf(c.xp), maxSt = STAGE_XP.length - 1;
+      const toNext = st < maxSt ? (c.xp - STAGE_XP[st]) / (STAGE_XP[st + 1] - STAGE_XP[st]) * 100 : 100;
+      const last = S.carps.length <= 1, armed = releaseArm === c, v = releaseValue(c);
+      const rest = c.bt && c.bt > Date.now() ? Math.ceil((c.bt - Date.now()) / 60000) : 0;
+      const hungry = c.hunger < 30, hcol = c.hunger < 30 ? '#ffb703' : '#7bdc6a';
+      html = `<div class="carp-head"><div class="spr">${spriteHtml(sp)}</div><div><div class="gnm">${sp.name}</div><div class="rr">${rar.n}${c.hy ? ' · cría' : ''}</div></div></div>
+        <dl class="kv">
+          <dt>tamaño</dt><dd>${STAGE_NAMES[st]} <span class="sub">${st < maxSt ? `· ${STAGE_XP[st + 1] - c.xp} bolitas para crecer` : '· tamaño máximo'}</span>${pbar(toNext)}</dd>
+          <dt>barriga</dt><dd>${hungry ? 'con hambre <span class="sub">· así no da perlas</span>' : 'llena'}${pbar(c.hunger, hcol)}</dd>
+          <dt>perlas</dt><dd>${fmt(Math.round(perlaValue(c) * (atHome(c) ? HOME_BONUS : 1)))} cada ~${PERLA_EVERY} s <span class="sub">· ${fmt(c.made || 0)} en total</span></dd>
+          ${PERS[c.pers] ? `<dt>carácter</dt><dd>${PERS[c.pers].name} <span class="sub">· ${PERS[c.pers].desc}</span></dd>` : ''}
+          <dt>casa</dt><dd>${zoneNameOf(c.home)} ${atHome(c) ? '<span class="sub">· está en casa: da un 20 % más</span>' : '<span class="sub">· anda fuera</span>'}</dd>
+        </dl>
+        <div class="acts">${S.lab.built ? (st < 2 ? '<button disabled>al laboratorio · cuando sea adulta</button>' : rest ? `<button disabled>descansando · ${rest} min</button>` : '<button class="main" data-tolab>llevar al laboratorio</button>') : ''}
+          <button class="danger ${armed ? 'armed' : ''}" data-release ${last ? 'disabled' : ''}>${last ? 'es tu única carpa' : armed ? `¿seguro? soltar · +${fmt(v)}` : `soltar al río · +${fmt(v)}`}</button></div>`;
     }
     // el panel se refresca cada segundo: solo se repinta si cambia, para no perder un toque a medias
     if (openPanel && html !== lastHtml) body.innerHTML = lastHtml = html;
@@ -2476,8 +2672,10 @@
   // el panel del nenúfar toma el color de su zona (botones y títulos); los demás paneles, el de siempre
   const sheetEl = $('#sheet');
   function applyFrame() {
-    if (openPanel === 'gacha') { sheetEl.classList.add('gacha'); sheetEl.style.setProperty('--a', GACCENT[ZINFO[gachaZone].id]); }
-    else sheetEl.classList.remove('gacha');
+    sheetEl.classList.toggle('gacha', openPanel === 'gacha');
+    sheetEl.classList.toggle('framed', !!openPanel);
+    const col = openPanel === 'gacha' ? GACCENT[ZINFO[gachaZone].id] : openPanel === 'carp' && sheetCarp ? RARITY[spOf(sheetCarp).r].c : MENU_COLOR[openPanel];
+    if (col) sheetEl.style.setProperty('--a', col);
   }
   function show(kind) {
     if (kind !== 'carp') releaseArm = null;
@@ -2529,13 +2727,21 @@
       const c = sheetCarp;
       if (!c || S.carps.length <= 1 || !S.carps.includes(c)) return;
       if (releaseArm !== c) { releaseArm = c; renderPanel('carp'); return; }      // primer toque: pide confirmación
-      const v = releaseValue(c);
-      S.carps.splice(S.carps.indexOf(c), 1); S.perlas += v;
-      ripple(c.x, c.y, false); ripple(c.x, c.y, true);
-      if (selected === c) selected = null;
-      sheetCarp = null; hide();
-      toast(`${spOf(c).name} vuelve al río · +${fmt(v)} perlas`, RARITY[spOf(c).r].c, 2600);
-      refreshHud(); refreshInfo(); save();
+      releaseCarp(c); hide();
+    } else if (b.dataset.relc != null) {                                         // soltar desde «mis carpas» (también con confirmación)
+      const c = S.carps[+b.dataset.relc];
+      if (!c) return;
+      if (mineArm !== c) { mineArm = c; renderPanel('album'); return; }
+      mineArm = null; releaseCarp(c); renderPanel('album');
+    } else if (b.dataset.seec != null) {
+      const c = S.carps[+b.dataset.seec];
+      if (c) { sheetCarp = c; selected = c; releaseArm = null; refreshInfo(); show('carp'); }
+    } else if (b.dataset.msort != null) {
+      mineSort = b.dataset.msort; mineArm = null; renderPanel('album');
+    } else if (b.dataset.atab != null) {
+      albumTab = b.dataset.atab; renderPanel('album');
+    } else if (b.dataset.amiss != null) {
+      albumMiss = !albumMiss; renderPanel('album');
     } else if (b.dataset.det != null) {
       gachaDet = !gachaDet; renderPanel('gacha');
     } else if (b.dataset.pull != null) {

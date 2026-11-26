@@ -80,16 +80,22 @@ const MAP = (() => {
     const f = 1 - d / k;
     return z.secret ? f * 0.9 : f;
   }
+  let segT = 0;                                       // dónde cae el punto más cercano en el último tramo medido (0..1)
   function segD(px, py, ax, ay, bx, by) {
     const vx = bx - ax, vy = by - ay, t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
+    segT = t;
     const ex = px - ax - vx * t, ey = py - ay - vy * t;
     return Math.sqrt(ex * ex + ey * ey);
   }
-  // caja de cada pasadizo, para no medir distancias en todo el mapa
+  // caja de cada pasadizo, para no medir distancias en todo el mapa, y lo largo de cada tramo
+  // (el pasadizo se abre en la boca como un río que desemboca: hasta PW_MOUTH veces más ancho)
+  const PW_MOUTH = 1.7;
   Z.forEach((z) => {
     if (!z.path) return;
-    const xs = z.path.map((p) => p[0]), ys = z.path.map((p) => p[1]);
-    z.pbox = [Math.min(...xs) - PW, Math.min(...ys) - PW, Math.max(...xs) + PW, Math.max(...ys) + PW];
+    const xs = z.path.map((p) => p[0]), ys = z.path.map((p) => p[1]), m = PW * PW_MOUTH * 1.15;
+    z.pbox = [Math.min(...xs) - m, Math.min(...ys) - m, Math.max(...xs) + m, Math.max(...ys) + m];
+    z.plen = z.path.slice(1).map((p, k) => Math.hypot(p[0] - z.path[k][0], p[1] - z.path[k][1]));
+    z.ptot = z.plen.reduce((a, b) => a + b, 0);
   });
 
   // muestra del mapa en (x, y). Se reutiliza el mismo objeto para no crear basura (se llama muchísimo).
@@ -109,10 +115,23 @@ const MAP = (() => {
       const z = Z[i], bx = z.pbox;
       if (x < bx[0] || x > bx[2] || y < bx[1] || y > bx[3]) continue;
       const p = z.path;
-      let d = 1e9;
-      for (let k = 0; k < p.length - 1; k++) d = Math.min(d, segD(x, y, p[k][0], p[k][1], p[k + 1][0], p[k + 1][1]));
-      const ep = PW - d;
-      if (ep > e) { if (z1 !== i) { z2 = z1; } z1 = i; e = ep; wz = 1; }
+      let d = 1e9, at = 0, acc = 0;
+      for (let k = 0; k < p.length - 1; k++) {
+        const dk = segD(x, y, p[k][0], p[k][1], p[k + 1][0], p[k + 1][1]);
+        if (dk < d) { d = dk; at = acc + segT * z.plen[k]; }
+        acc += z.plen[k];
+      }
+      const sp = at / z.ptot;                                   // 0 en la boca (junto a su zona) · 1 al llegar al rincón
+      const wid = PW * (1 + (PW_MOUTH - 1) * (1 - sp) * (1 - sp)) * (1 + 0.12 * Math.sin(sp * 9 + i * 2.1));
+      const ep = wid - d;
+      if (ep > e) {
+        // el color del rincón entra poco a poco: nada justo donde el pasadizo empieza a ganar a su zona (así no hay
+        // una línea), y del todo al avanzar por él; el tramo de mezcla es corto para que no quede un gris sucio
+        const ins = Math.min(1, (ep - e) / 7), k = Math.max(0, Math.min(1, (sp - 0.2) / 0.45));
+        const wk = k * k * (3 - 2 * k) * ins * ins * (3 - 2 * ins);
+        if (z1 !== i) { z2 = z1; wz = wk; } else wz = Math.max(wz, wk);     // dentro de la propia poza manda su color
+        z1 = i; e = ep;
+      }
     }
     let r = 1 - e / RS;
     for (const is of ISLANDS[z1]) {
