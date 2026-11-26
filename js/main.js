@@ -1583,6 +1583,7 @@
   const PAD_R = 12;                      // radio que ocupa en el agua (también la zona de toque)
   const PHASES = ['coin', 'shake', 'burst', 'rise', 'open'];
   const SHAKE = [0.7, 0.95, 1.5, 2.2, 3.0];               // lo que tiembla antes de abrirse, según la rareza
+  const roomLeft = () => Math.max(0, capacity() - S.carps.length - S.gacha.out.length);      // huecos libres: sin sitio no se tira
   const poolOf = (zi) => (zi === PORTAL ? worldToday().pool : ZONES[zi].pool);
   const pullPrice = (zi) => Math.max(1, Math.round(ZONES[zi].pull * (1 - GACHA.discount[lvl('amuleto')])));
   const rgbOf = (h) => hex(h);
@@ -1648,6 +1649,7 @@
     const free = mode === 'free', fic = mode === 'ficha';
     if (gx || !isOpen(zi) || zi >= MAIN) return;
     if (zi === PORTAL && !portalOpen()) { toast(`el portal está cerrado · abre a las ${portalNext()}`, '#b8a4ff', 2400); return; }
+    if (roomLeft() < n) { toast(n > 1 ? `necesitas ${n} huecos libres` : 'estanque lleno · suelta una carpa o amplía el cupo', '#ffb703', 2200); return; }
     const price = free || fic ? 0 : pullPrice(zi) * n;
     if (fic && (n !== 1 || zi > GACHA.fichas.maxZone || S.gacha.fichas < 1)) return;
     if (!free && !fic && S.perlas < price) { toast('te faltan perlas', '#ffb703', 1400); return; }
@@ -1760,16 +1762,15 @@
   }
   function openGacha(zi) { gachaZone = zi; lastBatch = null; show('gacha'); }
 
-  // marco, color y adornos de cada zona (el marco se pinta en frames.js)
+  // color de cada zona para el panel del nenúfar
   const GACCENT = { estanque: '#6ab85e', nenufares: '#f49ac0', cascada: '#8fd4f4', cueva: '#78f0ff', luna: '#fff3b0', templo: '#e0b040', portal: '#c77dff' };
-  const GORN = { estanque: '~ ', nenufares: '@ ~ ~ * ~ ~ ', cascada: '| : ', cueva: '/\\ /\\ &lt;&gt; ', luna: '* . ) . * . ( . ', templo: '[=]', portal: '&lt;&gt; ~ ~ ' };
-  const GART = '  .-"-.\n ( (*) )\n  \'-.-\'';
   const gbar = (n, tot, w) => { const k = Math.max(0, Math.min(w, Math.round(n / tot * w))); return '█'.repeat(k) + '░'.repeat(w - k); };
   let gachaDet = false;                  // el apartado «detalles» del panel, desplegado o no
   function gachaHtml() {
     const zi = gachaZone, z = ZONES[zi], st = S.gacha.pity[zi] || [0, 0, 0], price = pullPrice(zi), odds = oddsOf(zi), pool = poolOf(zi);
     const free = S.gacha.free.filter((f) => f === zi).length, closed = zi === PORTAL && !portalOpen(), full = S.carps.length >= capacity();
-    const can = (n) => (closed || !!gx || S.perlas < price * n ? 'disabled' : '');
+    const room = roomLeft();
+    const can = (n) => (closed || !!gx || room < n || S.perlas < price * n ? 'disabled' : '');
     const nameOf = (x) => (S.album[x] ? SPECIES[x].name : '???');
     const rc = (x) => RARITY[SPECIES[x].r].c;
     const present = RARITY.map((r, i) => i).filter((i) => odds[i] > 0);
@@ -1778,9 +1779,10 @@
     else if (zi === PORTAL) out += `<div class="note">hoy: ${worldToday().name}</div>`;
     out += `<div class="pulls"><button class="main" data-pull="1" ${can(1)}>tirar · ${fmt(price)}</button><button data-pull="10" ${can(10)}>×10 · ${fmt(price * 10)}</button></div>`;
     const F = GACHA.fichas, nf = S.gacha.fichas, left = Math.max(0, F.every - (S.gacha.fichaT || 0));
-    if (zi <= F.maxZone) out += `<button class="gb" data-ficha ${nf < 1 || gx ? 'disabled' : ''}>${nf > 0 ? `ficha gratis <span class="chip">${nf}</span>` : `próxima ficha · ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`}</button>`;
-    if (free) out += `<button class="gb" data-free ${closed || gx ? 'disabled' : ''}>cápsula guardada <span class="chip">${free}</span></button>`;
-    if (full) out += '<div class="note">estanque lleno · las nuevas vuelven al río</div>';
+    if (zi <= F.maxZone) out += `<button class="gb" data-ficha ${nf < 1 || gx || room < 1 ? 'disabled' : ''}>${nf > 0 ? `ficha gratis <span class="chip">${nf}</span>` : `próxima ficha · ${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`}</button>`;
+    if (free) out += `<button class="gb" data-free ${closed || gx || room < 1 ? 'disabled' : ''}>cápsula guardada <span class="chip">${free}</span></button>`;
+    if (room < 1) out += '<div class="note">estanque lleno · suelta una carpa o amplía el cupo</div>';
+    else if (room < 10) out += `<div class="note">×10 necesita 10 huecos · hay ${room}</div>`;
     if (lastBatch) {
       const cnt = RARITY.map((r, i) => ({ r, n: lastBatch.filter((b) => SPECIES[b.id].r === i).length })).filter((o) => o.n);
       const nuevas = lastBatch.filter((b) => b.new).map((b) => SPECIES[b.id].name);
@@ -2471,21 +2473,11 @@
   }
 
   let sheetCarp = null, releaseArm = null, lastHtml = '', labA = null, labB = null, labSlot = 'a';
-  // el panel del nenúfar lleva el marco pintado de su zona (frames.js); los demás paneles, el de siempre
-  const sheetEl = $('#sheet'), frameCv = $('#frame');
-  let frameRO = null, frameRaf = 0;
-  const frameBorder = () => (window.innerWidth < 560 ? 36 : 52);                 // grosor del marco en píxeles
-  function drawFrame() {
-    if (openPanel !== 'gacha') return;
-    const r = sheetEl.getBoundingClientRect();
-    FRAMES.draw(frameCv, ZINFO[gachaZone].id, Math.round(r.width), Math.round(r.height), frameBorder());
-  }
+  // el panel del nenúfar toma el color de su zona (botones y títulos); los demás paneles, el de siempre
+  const sheetEl = $('#sheet');
   function applyFrame() {
-    if (openPanel === 'gacha') {
-      sheetEl.classList.add('framed'); sheetEl.style.setProperty('--a', GACCENT[ZINFO[gachaZone].id]); sheetEl.style.setProperty('--fb', frameBorder() + 'px');
-      drawFrame();
-      if (!frameRO && window.ResizeObserver) frameRO = new ResizeObserver(() => { cancelAnimationFrame(frameRaf); frameRaf = requestAnimationFrame(drawFrame); }), frameRO.observe(sheetEl);
-    } else sheetEl.classList.remove('framed');
+    if (openPanel === 'gacha') { sheetEl.classList.add('gacha'); sheetEl.style.setProperty('--a', GACCENT[ZINFO[gachaZone].id]); }
+    else sheetEl.classList.remove('gacha');
   }
   function show(kind) {
     if (kind !== 'carp') releaseArm = null;
