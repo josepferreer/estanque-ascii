@@ -27,7 +27,8 @@ body {
 /* el estanque ocupa toda la ventana; lo demás flota encima */
 #app { position: fixed; inset: 0; overflow: hidden; }
 #stage { position: absolute; inset: 0; line-height: 0; }
-#pond { position: absolute; left: 0; top: 0; touch-action: manipulation; cursor: pointer; }
+/* none: el arrastre y el pellizco los gestiona el juego; con "manipulation" el navegador se queda el gesto y cancela el puntero */
+#pond { position: absolute; left: 0; top: 0; touch-action: none; cursor: pointer; }
 
 #hud {
   position: absolute;
@@ -192,6 +193,13 @@ button:disabled { color: var(--dim); cursor: default; opacity: .6; }
 .egg-info { display: grid; gap: 14px; }
 .egg-info .big { font-size: 22px; white-space: pre; line-height: 1.1; color: var(--accent); }
 .egg-list { display: grid; gap: 4px; color: var(--dim); }
+
+/* el marcador de arriba se pinta ahora en el lienzo (capa de texto ASCII): este queda oculto a la vista pero se sigue
+   actualizando, para lectores de pantalla y para las pruebas */
+#hud { position: absolute; top: 0; left: 0; right: auto; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); background: none; white-space: nowrap; }
+
+/* la ruleta abierta en el mapa ocupa la pantalla: fuera lo que se le monta encima */
+body.mesa #collect, body.mesa #info, body.mesa #zoom { display: none; }
 
 /* ficha de una carpa */
 .carp { display: grid; gap: 16px; }

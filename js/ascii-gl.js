@@ -49,6 +49,25 @@ const ASCII_GL = {
                + 0.30 * textureLod(uImg, uv, 2.0).rgb;               // imagen a 1/4
         o = vec4(min(c, vec3(1.0)), 1.0);
       }`;
+    // capa de texto: una rejilla propia de caracteres (cada uno de tw×th píxeles), encima de todo y sin resplandor.
+    // Por celda: qué letra (0 = ninguna), color de la letra y color de fondo (con transparencia).
+    const FS_TEXT = `#version 300 es
+      precision highp float;
+      uniform sampler2D uCh, uFg, uBg, uGl;
+      uniform vec2 uCell;
+      uniform float uH, uN;
+      out vec4 o;
+      void main() {
+        vec2 p = vec2(gl_FragCoord.x, uH - gl_FragCoord.y);
+        ivec2 cell = ivec2(floor(p / uCell));
+        vec2 f = p / uCell - vec2(cell);
+        vec4 bg = texelFetch(uBg, cell, 0), fg = texelFetch(uFg, cell, 0);
+        float ci = floor(texelFetch(uCh, cell, 0).r * 255.0 + 0.5);
+        float a = ci > 0.5 ? texture(uGl, vec2((ci + f.x) / uN, f.y)).a * fg.a : 0.0;
+        float al = max(bg.a, a);
+        if (al <= 0.0) discard;
+        o = vec4(bg.a > 0.0 ? mix(bg.rgb, fg.rgb, a) : fg.rgb, al);
+      }`;
     const shader = (type, code) => {
       const s = gl.createShader(type); gl.shaderSource(s, code); gl.compileShader(s);
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
@@ -62,7 +81,7 @@ const ASCII_GL = {
       const u = {}; ['uCell', 'uH', 'uN', 'uSize'].forEach((n) => { u[n] = gl.getUniformLocation(p, n); });
       return { p, u };
     };
-    const pA = program(FS_ASCII, ['uSrc', 'uHash', 'uAtlas']), pB = program(FS_BLOOM, ['uImg']);
+    const pA = program(FS_ASCII, ['uSrc', 'uHash', 'uAtlas']), pB = program(FS_BLOOM, ['uImg']), pT = program(FS_TEXT, ['uCh', 'uFg', 'uBg', 'uGl']);
     const texture = (min, mag) => {
       const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, min); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, mag);
@@ -71,7 +90,9 @@ const ASCII_GL = {
     };
     const tSrc = texture(gl.NEAREST, gl.NEAREST), tHash = texture(gl.NEAREST, gl.NEAREST), tAtlas = texture(gl.NEAREST, gl.NEAREST);
     const tImg = texture(gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR), fbo = gl.createFramebuffer();
+    const tTch = texture(gl.NEAREST, gl.NEAREST), tTfg = texture(gl.NEAREST, gl.NEAREST), tTbg = texture(gl.NEAREST, gl.NEAREST), tTgl = texture(gl.NEAREST, gl.NEAREST);
     let atlasCell = 0, nChars = 1;
+    let tCols = 1, tRows = 1, tW = 1, tH = 1, tN = 1;
     cv.addEventListener('webglcontextlost', (e) => e.preventDefault());
     cv.addEventListener('webglcontextrestored', () => location.reload());
 
@@ -97,6 +118,36 @@ const ASCII_GL = {
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tImg, 0);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         this.hashDirty = true;
+      },
+      // o = { cols, rows, tw, th, charset, font } — la rejilla de texto y su atlas de letras (la posición 0 del juego de caracteres es «nada»)
+      textResize(o) {
+        tCols = o.cols; tRows = o.rows; tW = o.tw; tH = o.th; tN = o.charset.length;
+        const a = document.createElement('canvas'); a.width = tN * tW; a.height = tH;
+        const x = a.getContext('2d');
+        x.font = `bold ${Math.round(tH * 0.8)}px ${o.font}`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillStyle = '#fff';
+        o.charset.forEach((chr, i) => {
+          if (!i) return;
+          x.save(); x.beginPath(); x.rect(i * tW, 0, tW, tH); x.clip();
+          x.fillText(chr, i * tW + tW / 2, tH / 2 + tH * 0.04); x.restore();
+        });
+        gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tTgl);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, a);
+      },
+      // o = { ch: Uint8Array (cols×rows), fg: Uint8Array (RGBA), bg: Uint8Array (RGBA) } — sube la rejilla y la pinta encima
+      text(o) {
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+        gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tTch);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, tCols, tRows, 0, gl.RED, gl.UNSIGNED_BYTE, o.ch);
+        gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, tTfg);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tCols, tRows, 0, gl.RGBA, gl.UNSIGNED_BYTE, o.fg);
+        gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, tTbg);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tCols, tRows, 0, gl.RGBA, gl.UNSIGNED_BYTE, o.bg);
+        gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tTgl);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, cv.width, cv.height);
+        gl.useProgram(pT.p); gl.uniform2f(pT.u.uCell, tW, tH); gl.uniform1f(pT.u.uH, cv.height); gl.uniform1f(pT.u.uN, tN);
+        gl.enable(gl.BLEND); gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        gl.disable(gl.BLEND);
       },
       // o = { src (lienzo de una celda por píxel), hash (Float32Array por celda), GW, GH, cellDev }
       draw(o) {
