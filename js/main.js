@@ -15,7 +15,7 @@
  * ?rapido (los visitantes, la garza y la lluvia llegan enseguida).
  */
 (() => {
-  const { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS } = DATA;
+  const { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS, GACHA } = DATA;
   const NZ = MAP.N, MAIN = MAP.MAIN;                 // 9 zonas en el mapa: las 7 que se compran y 2 secretas
   const ZINFO = [...ZONES, ...SECRETS];             // colores y nombre de cada zona del mapa, en el mismo orden
 
@@ -121,6 +121,14 @@
   (S.eggs || []).forEach((e) => { if (e.sp === 'ryu') e.sp = 'dragon'; });
   if (S.album && S.album.ryu) { S.album.dragon = (S.album.dragon || 0) + S.album.ryu; delete S.album.ryu; }
   S.lab = S.lab || { built: false };
+  // gachapon (27/11): ya no hay huevos. Los huevos sueltos que quedaban pasan a ser cápsulas guardadas, que se abren gratis en su nenúfar;
+  // los del laboratorio siguen en S.eggs (la mezcla de dentro). La incubadora pasa a ser el amuleto de la suerte.
+  S.gacha = S.gacha || {};
+  S.gacha.free = S.gacha.free || []; S.gacha.out = S.gacha.out || []; S.gacha.hist = S.gacha.hist || []; S.gacha.pity = S.gacha.pity || {};
+  if (S.gacha.fichas == null) { S.gacha.fichas = DEMO !== null ? GACHA.fichas.max : 3; S.gacha.fichaT = 0; S.gacha.day = ''; }      // fichas de bienvenida
+  S.eggs = (S.eggs || []).filter((e) => { if (e.lab) return true; S.gacha.free.push(Math.min(e.zone || 0, ZONES.length - 1)); return false; });
+  if (S.up.incub) { S.up.amuleto = Math.max(S.up.amuleto || 0, S.up.incub); }
+  delete S.up.incub;
   SOUND.set(S.sound);
 
   // ───────────────────────── zonas, agua y rutas ─────────────────────────
@@ -170,7 +178,7 @@
   const foodMax = () => 12 + 4 * lvl('bag');
   let raining = false;
   const foodEvery = () => [5, 4.2, 3.5, 2.8][lvl('bag')] * (raining ? 0.5 : 1);
-  const EGG_TIME = (z) => (DEMO !== null ? 3 : 20 * (Math.min(z, ZONES.length - 1) + 1)) * [1, 0.7, 0.5, 0.3][lvl('incub')];
+  const LAB_TIME = (z) => (DEMO !== null ? 3 : 20 * (Math.min(z, ZONES.length - 1) + 1)) * 1.5;      // segundos que tarda una mezcla
 
   // ───────────────────────── portal ─────────────────────────
   // Abierto la primera media hora de cada hora par; cada día da a un mundo distinto.
@@ -224,7 +232,7 @@
 
   // soltar una carpa al río: devuelve parte de lo que costó su huevo, más cuanto más grande y rara
   const zoneOfSpecies = (c) => (c.hy ? c.hy.z : SPECIES[c.sp] && SPECIES[c.sp].lab ? 5 : Math.max(0, ZONES.findIndex((z) => z.pool.includes(c.sp))));
-  const releaseValue = (c) => Math.max(1, Math.round(ZONES[Math.min(ZONES.length - 1, zoneOfSpecies(c))].egg * (0.2 + 0.1 * stageOf(c.xp)) * Math.sqrt(RARITY[spOf(c).r].mult)));
+  const releaseValue = (c) => Math.max(1, Math.round(ZONES[Math.min(ZONES.length - 1, zoneOfSpecies(c))].pull * (0.2 + 0.1 * stageOf(c.xp)) * Math.sqrt(RARITY[spOf(c).r].mult)));
 
   // ───────────────────────── mundo ─────────────────────────
   let t = 0;                 // segundos de juego
@@ -1544,6 +1552,7 @@
     ripple(c.x, c.y, true);
   }
 
+  // la mezcla del laboratorio, lista
   function hatch(e) {
     let c, isNew, sp;
     if (e.sp) {                                       // criatura del laboratorio
@@ -1560,19 +1569,6 @@
       isNew = !rec;
       S.hybrids[e.hy.name] = { n: (rec ? rec.n : 0) + 1, pat: e.hy.pat, r: e.hy.r, rainbow: e.hy.rainbow, head: e.hy.head };
       sp = e.hy;
-    } else {
-      const zone = ZONES[e.zone], night = light.night, wd = e.world && WORLDS.find((w) => w.id === e.world);
-      const pool = wd ? wd.pool : zone.pool;
-      // de noche salen más raras
-      const wOf = (id) => RARITY[SPECIES[id].r].w * (SPECIES[id].r >= 2 ? 1 + night * 1.2 : 1);
-      const total = pool.reduce((a, id) => a + wOf(id), 0);
-      let roll = Math.random() * total, id = pool[0];
-      for (const k of pool) { roll -= wOf(k); if (roll <= 0) { id = k; break; } }
-      const [x, y] = randomWaterPoint(e.zone);
-      c = initCarp({ sp: id, hunger: 60, xp: 0, x, y });
-      isNew = !S.album[id];
-      S.album[id] = (S.album[id] || 0) + 1;
-      sp = SPECIES[id];
     }
     S.carps.push(c);
     toast(`${isNew ? 'nueva · ' : ''}${sp.name} (${RARITY[sp.r].n})`, RARITY[sp.r].c, 3200);
@@ -1580,7 +1576,221 @@
     refreshHud();
   }
 
-  // ── cría: dos carpas adultas ponen un huevo que mezcla sus colores ──
+  // ───────────────────────── gachapon ─────────────────────────
+  // Cada zona abierta tiene su nenúfar (se dibuja en pads.js). Se toca, se tira, la flor se cierra, tiembla, se abre
+  // y suelta una cápsula con la carpa dentro. El color de la cápsula avisa de la rareza antes de abrirse.
+  const PAD_K = 0.34;                    // escala del dibujo del nenúfar (unidades de boceto → mundo)
+  const PAD_R = 12;                      // radio que ocupa en el agua (también la zona de toque)
+  const PHASES = ['coin', 'shake', 'burst', 'rise', 'open'];
+  const SHAKE = [0.7, 0.95, 1.5, 2.2, 3.0];               // lo que tiembla antes de abrirse, según la rareza
+  const poolOf = (zi) => (zi === PORTAL ? worldToday().pool : ZONES[zi].pool);
+  const pullPrice = (zi) => Math.max(1, Math.round(ZONES[zi].pull * (1 - GACHA.discount[lvl('amuleto')])));
+  const rgbOf = (h) => hex(h);
+  const mixRgb = (a, b, k) => a.map((v, i) => Math.round(v + (b[i] - v) * clamp(k, 0, 1))).join(',');
+  let gx = null;                         // la tirada que se está viendo: { zi, list, i, ph, t0, fast, results }
+  let lastBatch = null;                  // resultado de la última tanda ×10, para enseñarlo en el panel
+  let gachaZone = 0;
+  let fx = [];                           // chispas
+
+  // sitio de cada nenúfar: agua despejada junto a la orilla de su zona (el del Estanque, junto al islote del laboratorio)
+  const PAD_PREF = [null, Math.PI, 0, -Math.PI / 2, Math.PI / 2, -2.1, Math.PI / 2];
+  const padSpots = [];
+  function padOk(zi, x, y) {
+    const q0 = MAP.sample(x, y);
+    if (q0.z !== zi || q0.r > 0.74) return false;
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4, q = MAP.sample(x + Math.cos(a) * 11.5, y + Math.sin(a) * 5.5);
+      if (q.z !== zi || q.r > 0.82) return false;
+    }
+    for (const is of MAP.ISLANDS[zi]) if (Math.hypot(is.x - x, is.y - y) < (is.temple ? 20 : is.r) + 14) return false;
+    for (const T of MAP.TREASURES) if (Math.hypot(T.x - x, T.y - y) < 12) return false;
+    if (zi === 2 && SPOT.fall && Math.abs(x - SPOT.fall[0]) < 24 && y < SPOT.fall[1] + 34) return false;      // el río de la cascada, despejado
+    if (zi === 3 && SPOT.cave && Math.hypot(x - SPOT.cave[0], y - SPOT.cave[1]) < 26) return false;
+    if (zi === 3 && SPOT.shaft && Math.hypot(x - SPOT.shaft[0], y - SPOT.shaft[1]) < 16) return false;
+    return true;
+  }
+  function padSpot(zi) {
+    if (padSpots[zi]) return padSpots[zi];
+    let found = null;
+    if (zi === 0 && padOk(0, -24, -10)) found = { x: -24, y: -10 };
+    for (let k = 0; k < 60 && !found; k++) {
+      const a = (PAD_PREF[zi] == null ? 0 : PAD_PREF[zi]) + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.12;
+      for (const lim of [0.76, 0.72, 0.68, 0.8]) {
+        const p = MAP.shorePoint(zi, a, lim);
+        if (p && padOk(zi, p[0], p[1])) { found = { x: p[0], y: p[1] }; break; }
+      }
+    }
+    if (!found) { const [x, y] = MAP.randomPoint(zi, 0.5, seeded(900 + zi)); found = { x, y }; }
+    return (padSpots[zi] = found);
+  }
+
+  // una tirada: la rareza sale de las probabilidades, con garantía por nenúfar (st = tiradas desde la última de cada rareza)
+  function rollOne(zi, st, minR) {
+    const pool = poolOf(zi), have = new Set(pool.map((id) => SPECIES[id].r));
+    const top = Math.max(...have), act = GACHA.pity.map((p) => top >= p.min);          // solo cuenta la garantía de rarezas que este nenúfar tiene
+    let min = minR || 0;
+    GACHA.pity.forEach((p, i) => { if (act[i] && (st[i] || 0) + 1 >= p.every) min = Math.max(min, p.min); });
+    const w = GACHA.rates.map((p, r) => (have.has(r) && r >= Math.min(min, top) ? p : 0));
+    let roll = Math.random() * w.reduce((a, b) => a + b, 0), r = top;
+    for (let i = 0; i < w.length; i++) { if (w[i] <= 0) continue; roll -= w[i]; if (roll <= 0) { r = i; break; } }
+    GACHA.pity.forEach((p, i) => { if (act[i]) st[i] = r >= p.min ? 0 : (st[i] || 0) + 1; });
+    const ids = pool.filter((id) => SPECIES[id].r === r);
+    return { id: ids[Math.floor(Math.random() * ids.length)], r };
+  }
+  // porcentajes reales de este nenúfar (las rarezas que no tiene se reparten entre las que sí)
+  function oddsOf(zi) {
+    const have = new Set(poolOf(zi).map((id) => SPECIES[id].r)), w = GACHA.rates.map((p, r) => (have.has(r) ? p : 0)), tot = w.reduce((a, b) => a + b, 0);
+    return w.map((p) => p / tot * 100);
+  }
+
+  // mode: 'ficha' (una tirada gratis), 'free' (una cápsula guardada) o nada (con perlas)
+  function startPull(zi, n, mode) {
+    const free = mode === 'free', fic = mode === 'ficha';
+    if (gx || !isOpen(zi) || zi >= MAIN) return;
+    if (zi === PORTAL && !portalOpen()) { toast(`el portal está cerrado · abre a las ${portalNext()}`, '#b8a4ff', 2400); return; }
+    const price = free || fic ? 0 : pullPrice(zi) * n;
+    if (fic && (n !== 1 || zi > GACHA.fichas.maxZone || S.gacha.fichas < 1)) return;
+    if (!free && !fic && S.perlas < price) { toast('te faltan perlas', '#ffb703', 1400); return; }
+    if (free) { const k = S.gacha.free.indexOf(zi); if (k < 0) return; S.gacha.free.splice(k, 1); }
+    if (fic) S.gacha.fichas--;
+    S.perlas -= price;
+    const st = S.gacha.pity[zi] = S.gacha.pity[zi] || [0, 0, 0], list = [];
+    for (let i = 0; i < n; i++) list.push(rollOne(zi, st, n >= 10 && i === n - 1 && !list.some((o) => o.r >= 1) ? 1 : 0));
+    S.gacha.out.push(...list.map((o) => ({ id: o.id, zi })));       // si se cierra la página a medias, se abren al volver
+    gx = { zi, list, i: 0, ph: 'coin', t0: t, fast: n > 1, results: [] };
+    lastBatch = null; hide(); selected = null; refreshInfo();
+    const sp = padSpot(zi); flyTo(sp.x, sp.y - 4, Math.max(cam.z, 13));
+    SOUND.plop(); ripple(sp.x, sp.y, true);
+    refreshHud(); save();
+  }
+  function sparks(x, y, n, hexCol, up) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * 7, v = rnd(4, 14) * (up ? 1 : 0.7);
+      fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v * 0.7 - (up ? 10 : 3), t0: t, life: rnd(0.6, 1.3), col: hexCol });
+    }
+  }
+  // la carpa sale de la cápsula: se une al estanque, o, si está lleno, vuelve al río y deja perlas
+  function applyResult(zi, id) {
+    const sp = SPECIES[id], pad = padSpot(zi), isNew = !S.album[id];
+    S.album[id] = (S.album[id] || 0) + 1;
+    let full = false, v = 0;
+    if (S.carps.length >= capacity()) { full = true; v = releaseValue({ sp: id, xp: 0 }); S.perlas += v; }
+    else {
+      let x = pad.x, y = pad.y + 7; if (!waterAt(x, y, 0.88)) { x = pad.x; y = pad.y; }
+      const c = initCarp({ sp: id, hunger: 60, xp: 0, x, y }); c.ang = Math.PI / 2; resetSpine(c); S.carps.push(c);
+    }
+    const k = S.gacha.out.findIndex((o) => o.id === id && o.zi === zi); if (k >= 0) S.gacha.out.splice(k, 1);
+    S.gacha.hist.unshift({ id, zi, new: isNew, full, at: Date.now() }); S.gacha.hist.length = Math.min(S.gacha.hist.length, GACHA.history);
+    if (gx) gx.results.push({ id, new: isNew, full });
+    toast(`${isNew ? 'nueva · ' : ''}${sp.name} (${RARITY[sp.r].n})${full ? ` · estanque lleno, vuelve al río +${fmt(v)}` : ''}`, RARITY[sp.r].c, 3200);
+    quest('hatch'); refreshHud(); save();
+  }
+  function enterPhase(ph) {
+    const cur = gx.list[gx.i], R = cur.r, sp = padSpot(gx.zi), col = RARITY[R].c;
+    gx.ph = ph; gx.t0 = t;
+    if (ph === 'burst') {
+      sparks(sp.x, sp.y - 5, [8, 14, 26, 50, 90][R], col, true); ripple(sp.x, sp.y, false);
+      if (R >= 2) ripple(sp.x, sp.y, true);
+      if (R >= 3) { SOUND.secret(); ripple(sp.x, sp.y, false); }
+      if (R >= 4) SOUND.fortune();
+    } else if (ph === 'open') {
+      applyResult(gx.zi, cur.id);
+      sparks(sp.x, sp.y - 6, [6, 10, 18, 30, 50][R], col, false); SOUND.hatch(); ripple(sp.x, sp.y + 6, false);
+    }
+  }
+  const phaseLen = (R, fast) => { const f = fast ? 0.45 : 1; return { coin: 0.45 * f, shake: Math.max(0.35, SHAKE[R] * f), burst: 0.3 * f, rise: 0.9 * f, open: 0.7 * f }; };
+  // fichas: una cada 20 minutos hasta cinco, y dos de regalo cada día
+  function gainFichas(sec) {
+    const F = GACHA.fichas, G = S.gacha;
+    if (G.fichas >= F.max) { G.fichaT = 0; return; }
+    G.fichaT = (G.fichaT || 0) + sec;
+    if (G.fichaT >= F.every) { const n = Math.min(F.max - G.fichas, Math.floor(G.fichaT / F.every)); G.fichas += n; G.fichaT = G.fichas >= F.max ? 0 : G.fichaT % F.every; refreshNav(); }
+  }
+  function dailyFichas() {
+    const day = todayKey(), G = S.gacha;
+    if (G.day === day) return;
+    const first = G.day === '';
+    G.day = day;
+    if (!first) { G.fichas = Math.min(GACHA.fichas.max + GACHA.fichas.daily, G.fichas + GACHA.fichas.daily); toast(`regalo del día · +${GACHA.fichas.daily} fichas`, '#9be7a0', 3200); }
+    refreshNav(); save();
+  }
+  function updateGacha(dt) {
+    gainFichas(dt);
+    fx = fx.filter((f) => t - f.t0 < f.life); fx.forEach((f) => { f.x += f.vx * dt; f.y += f.vy * dt; f.vy += 16 * dt; });
+    if (!gx) return;
+    const D = phaseLen(gx.list[gx.i].r, gx.fast);
+    if (t - gx.t0 < D[gx.ph]) return;
+    const k = PHASES.indexOf(gx.ph);
+    if (k < PHASES.length - 1) { enterPhase(PHASES[k + 1]); return; }
+    gx.i++;
+    if (gx.i < gx.list.length) { gx.ph = 'coin'; gx.t0 = t; SOUND.plop(); return; }
+    const done = gx; gx = null;
+    if (done.list.length > 1) { lastBatch = done.results; gachaZone = done.zi; show('gacha'); }
+  }
+  // lo que se ve del nenúfar en cada momento de la tirada
+  function padState(zi) {
+    const st = { t, open: 0.72 + 0.08 * Math.sin(t * 1.4 + zi), capShow: true };
+    if (!gx || gx.zi !== zi) return st;
+    const cur = gx.list[gx.i], el = t - gx.t0, col = RARITY[cur.r].c, V = PADS.VARIANTS[ZINFO[zi].id], rc = rgbOf(col);
+    const p = clamp(el / phaseLen(cur.r, gx.fast)[gx.ph], 0, 1);
+    if (gx.ph === 'coin') { st.open = 0.75 - 0.6 * p; st.capY = 27 + 26 * p; }              // la cápsula se hunde en la flor, que se cierra
+    else if (gx.ph === 'shake') {
+      st.open = 0.15; st.capShow = false; st.dx = Math.sin(el * 46) * (0.5 + 1.8 * p);
+      st.glowRgb = mixRgb(V.glow.split(',').map(Number), rc, p * 1.2); st.glowA = 0.5 + 0.3 * p + 0.12 * Math.sin(el * 18);
+    } else if (gx.ph === 'burst') { st.open = 0.15 + 0.85 * p; st.capShow = false; st.glowRgb = rc.join(","); st.glowA = 0.95; }
+    else if (gx.ph === 'rise') { st.open = 1; st.capCol = col; st.capY = 50 - 56 * (1 - (1 - p) * (1 - p)); st.glowRgb = rc.join(','); st.glowA = 1.0; }
+    else { st.open = 1; st.capCol = col; st.capY = -6; st.capSplit = p; st.glowRgb = rc.join(','); st.glowA = 1.0 - 0.4 * p; st.capShow = p < 0.9; }
+    return st;
+  }
+  function drawGachaPad(zi) {
+    if (zi >= MAIN || !isOpen(zi)) return;
+    const sp = padSpot(zi), id = ZINFO[zi].id, st = padState(zi), mine = gx && gx.zi === zi;
+    PADS.draw(g, id, sp.x, sp.y, PAD_K, st);
+    airLights.push({ x: sp.x, y: sp.y - 6, h: 0, r: mine ? 11 : 9, rgb: st.glowRgb || PADS.VARIANTS[id].glow, a: 0.14 + 0.4 * light.night + (mine ? 0.15 : 0) });
+    if (id === 'nenufares') fireflies(sp.x, sp.y, 12, 6, 4, '255,235,110', 3);
+  }
+  function drawFx() {
+    fx.forEach((f) => { g.globalAlpha = Math.max(0, 1 - (t - f.t0) / f.life); g.fillStyle = f.col; g.fillRect(f.x - 0.35, f.y - 0.35, 0.7, 0.7); });
+    g.globalAlpha = 1;
+  }
+  // cápsulas a medias (se cerró la página en plena tirada): se abren sin animación
+  function flushOut() {
+    S.gacha.out.slice().forEach((o) => applyResult(o.zi, o.id));
+    S.gacha.out = [];
+  }
+  function openGacha(zi) { gachaZone = zi; lastBatch = null; show('gacha'); }
+
+  function gachaHtml() {
+    const zi = gachaZone, z = ZONES[zi], st = S.gacha.pity[zi] || [0, 0, 0], price = pullPrice(zi), odds = oddsOf(zi), pool = poolOf(zi);
+    const free = S.gacha.free.filter((f) => f === zi).length, closed = zi === PORTAL && !portalOpen(), full = S.carps.length >= capacity();
+    const can = (n) => (closed || !!gx || S.perlas < price * n ? 'disabled' : '');
+    const nameOf = (id) => (S.album[id] ? SPECIES[id].name : '???');
+    let out = `<div class="zone-title">${zi === PORTAL ? 'nenúfar del vacío' : 'nenúfar'} · ${z.name} <span>${S.carps.length}/${capacity()} carpas</span></div>`;
+    if (closed) out += `<div class="note">el portal está cerrado: abre a las ${portalNext()}</div>`;
+    else if (zi === PORTAL) out += `<div class="note">hoy da al ${worldToday().name}</div>`;
+    out += `<div class="pulls"><button data-pull="1" ${can(1)}>tirar · ${fmt(price)} perlas</button><button data-pull="10" ${can(10)}>×10 · ${fmt(price * 10)}</button></div>`;
+    const F = GACHA.fichas, okZone = zi <= F.maxZone, nf = S.gacha.fichas;
+    out += `<button class="back" data-ficha ${!okZone || nf < 1 || gx ? 'disabled' : ''}>tirar con ficha · ${nf}/${F.max}</button>`;
+    out += `<div class="note">${okZone ? (nf >= F.max ? 'fichas al máximo' : `la siguiente ficha en ${Math.floor((F.every - (S.gacha.fichaT || 0)) / 60)}:${String(Math.floor((F.every - (S.gacha.fichaT || 0)) % 60)).padStart(2, '0')}`) + ` · ${F.daily} de regalo cada día` : `las fichas valen del ${ZONES[0].name} a ${ZONES[F.maxZone].name}`}</div>`;
+    if (free) out += `<button class="back" data-free ${closed || gx ? 'disabled' : ''}>abrir cápsula guardada (${free})</button>`;
+    if (full) out += '<div class="note">el estanque está lleno: las carpas nuevas vuelven al río y te dan sus perlas</div>';
+    if (lastBatch) {
+      out += `<div class="zone-title">resultado ×${lastBatch.length}</div><div class="odds">` + lastBatch.map((r) => `<div style="color:${RARITY[SPECIES[r.id].r].c}">${SPECIES[r.id].name}${r.new ? ' · nueva' : ''}${r.full ? ' · al río' : ''}</div>`).join('') + '</div>';
+    }
+    out += '<div class="zone-title">probabilidades</div><dl class="facts">' + RARITY.map((r, i) => {
+      if (!odds[i]) return '';
+      const sp = pool.filter((id) => SPECIES[id].r === i).map(nameOf).join(', ');
+      return `<dt style="color:${r.c}">${r.n}</dt><dd>${odds[i].toFixed(odds[i] < 1 ? 1 : odds[i] < 10 ? 1 : 0)} % <span class="sub">· ${sp}</span></dd>`;
+    }).join('') + '</dl>';
+    const topR = Math.max(...pool.map((id) => SPECIES[id].r));
+    const gar = GACHA.pity.map((p, i) => (topR >= p.min ? `${RARITY[p.min].n}${i === 0 ? ' o mejor' : ''} en ${Math.max(1, p.every - (st[i] || 0))}` : null)).filter(Boolean);
+    out += `<div class="note">garantía: ${gar.join(' · ')} tiradas</div>`;
+    const hist = S.gacha.hist.filter((h) => h.zi === zi).slice(0, 10);
+    if (hist.length) out += '<div class="zone-title">últimas cápsulas</div><div class="odds">' + hist.map((h) => `<div style="color:${RARITY[SPECIES[h.id].r].c}">${SPECIES[h.id].name}${h.new ? ' · nueva' : ''}</div>`).join('') + '</div>';
+    return out;
+  }
+
+  // ── cría: dos carpas adultas mezclan sus colores en el laboratorio ──
   const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
   function hueShift(hx, deg) {
     const [r, gg, b] = hex(hx).map((v) => v / 255), mx = Math.max(r, gg, b), mn = Math.min(r, gg, b), l = (mx + mn) / 2;
@@ -1611,7 +1821,7 @@
   // ── laboratorio: mezcla dos carpas adultas; ciertas parejas dan una criatura en vez de una cría ──
   const recipeOf = (a, b) => (a.hy || b.hy ? null : RECIPES.find((r) => (r.a === a.sp && r.b === b.sp) || (r.a === b.sp && r.b === a.sp)) || null);
   const labZone = (a, b) => (recipeOf(a, b) ? 5 : Math.min(5, Math.max(zoneOfSpecies(a), zoneOfSpecies(b))));
-  const labCost = (a, b) => ZONES[labZone(a, b)].egg;
+  const labCost = (a, b) => ZONES[labZone(a, b)].pull;
   const labBusy = () => S.eggs.some((e) => e.lab);
   const canMix = (c) => S.carps.includes(c) && stageOf(c.xp) >= 2 && !(c.bt > Date.now());
   function labMix(a, b) {
@@ -1621,7 +1831,7 @@
     const now = Date.now();
     a.bt = now + BREED_REST; b.bt = now + BREED_REST;
     const L0 = MAP.ISLANDS[0][0], [x, y] = L0 ? [L0.x + L0.r + 8, L0.y] : [0, 0];
-    S.eggs.push({ lab: true, zone: z, ready: now + EGG_TIME(z) * 1500, sp: rec ? rec.sp : undefined, hy: rec ? undefined : makeHybrid(a, b), x, y });
+    S.eggs.push({ lab: true, zone: z, ready: now + LAB_TIME(z) * 1000, sp: rec ? rec.sp : undefined, hy: rec ? undefined : makeHybrid(a, b), x, y });
     labA = labB = null;
     toast(rec ? 'la mezcla burbujea de una forma muy rara...' : `mezclando ${spOf(a).name} y ${spOf(b).name}`, rec ? '#7bffcf' : '#ffb3d1', 3000);
     SOUND.hatch(); quest('breed'); refreshHud(); save();
@@ -1654,6 +1864,7 @@
   let hudAcc = 0, lureRip = 0, rainDrop = 0, portalWas = null;
   function update(dt) {
     t += dt;
+    updateGacha(dt);
     const fm = foodMax();
     if (S.food < fm) { S.foodT += dt; const fe = foodEvery(); while (S.foodT >= fe && S.food < fm) { S.food++; S.foodT -= fe; } } else S.foodT = 0;
 
@@ -1829,6 +2040,7 @@
     SPOT.crystals.forEach((k) => hole(k.x, k.y, 15, 0.85));
     hole(SPOT.shaft[0], SPOT.shaft[1], 24, 1);
     S.floating.forEach((p) => hole(p.x, p.y, 5, 0.6));          // las perlas también alumbran un poco
+    { const ps = padSpot(zi); hole(ps.x, ps.y - 4, PAD_R * 1.7, 0.95); }          // y el nenúfar de la máquina
     c.globalCompositeOperation = 'source-over';
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(darkCv, 0, 0); g.restore();
   }
@@ -1862,7 +2074,7 @@
     g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(fishCv, 0, 0); g.restore();
 
     // 3) lo que flota o sobresale: nenúfares, copas, rocas, cascada, tesoros, barreras
-    shown.forEach((zi) => { if (PAD_ZONES[ZINFO[zi].id]) drawPads(padsOf(zi)); landscapeTop(zi); const top = DECOR_TOP[ZINFO[zi].id]; if (top) top(zi); });
+    shown.forEach((zi) => { if (PAD_ZONES[ZINFO[zi].id]) drawPads(padsOf(zi)); landscapeTop(zi); const top = DECOR_TOP[ZINFO[zi].id]; if (top) top(zi); drawGachaPad(zi); });
     MAP.TREASURES.forEach((T) => { if (isOpen(T.z) && seen(T.x, T.y, 12)) drawTreasure(T, true); });
     drawBarriers();
 
@@ -1894,6 +2106,7 @@
     surface(shown, visible, u);                                     // reflejos: encima de las carpas
     shown.forEach((zi) => { const id = ZINFO[zi].id; if (id === 'luna') DECOR_TOP.moon(zi); else if (id === 'portal') DECOR_TOP.ring(zi); });
     drawAirLights();
+    drawFx();
     if (shown.includes(0) && LAB_AT()) labLights(LAB_AT());
     drawRain(vw, vh);
     for (let i = MAIN; i < NZ; i++) if (!isOpen(i) && isOpen(MAP.Z[i].parent)) secretHint(i);
@@ -1944,6 +2157,12 @@
     // tesoros
     for (const T of MAP.TREASURES) {
       if (!S.found[T.id] && isOpen(T.z) && Math.hypot(T.x - x, T.y - y) < reach(6)) { findTreasure(T); return; }
+    }
+    // los nenúfares de las máquinas
+    for (let zi = 0; zi < MAIN; zi++) {
+      if (!isOpen(zi)) continue;
+      const sp = padSpot(zi);
+      if (Math.hypot(sp.x - x, sp.y - 3 - y) < reach(PAD_R)) { if (!gx) openGacha(zi); return; }
     }
     // el laboratorio, en el islote del Estanque
     { const L = LAB_AT(); if (L && Math.hypot(L.x - x, L.y - y) < reach(L.r + 1)) { show('lab'); return; } }
@@ -2065,6 +2284,8 @@
     ensureQuests();
     const b = $('#nav [data-p="quests"]');
     if (b) b.classList.toggle('dot', S.quests.list.some((q) => q.done && !q.got));
+    const cb = $('#nav [data-p="gacha"]');
+    if (cb) cb.classList.toggle('dot', S.gacha.fichas > 0);                  // hay fichas por gastar
   }
   const bar = (v) => { const full = Math.round(clamp(v, 0, 100) / 10); return `[${'█'.repeat(full)}${'░'.repeat(10 - full)}]`; };
   function refreshInfo() {
@@ -2113,7 +2334,7 @@
   function labHtml() {
     if (!S.lab.built) {
       return `<div class="zone-title">laboratorio</div><div class="row"><pre>${LAB_ART}</pre>
-        <div><div class="nm">Construir el laboratorio</div><div class="sub">en el islote del Estanque. Mezcla dos carpas adultas: sale una cría con algo de cada una y, con la pareja justa, una criatura que no nace de ningún huevo.</div></div>
+        <div><div class="nm">Construir el laboratorio</div><div class="sub">en el islote del Estanque. Mezcla dos carpas adultas: sale una cría con algo de cada una y, con la pareja justa, una criatura que no sale de ninguna cápsula.</div></div>
         <button data-build ${S.perlas < LAB.cost ? 'disabled' : ''}>${fmt(LAB.cost)} perlas</button></div>`;
     }
     if (labA && !canMix(labA)) labA = null;
@@ -2122,7 +2343,7 @@
     let out = '<div class="zone-title">laboratorio</div>';
     if (mix) {
       const left = Math.max(0, Math.ceil((mix.ready - Date.now()) / 1000)), name = mix.sp ? '???' : mix.hy.name;
-      const total = EGG_TIME(mix.zone) * 1.5, pct = 100 - left / total * 100;
+      const total = LAB_TIME(mix.zone), pct = 100 - left / total * 100;
       out += `<div class="row"><pre>${LAB_ART}</pre><div><div class="nm">mezclando · ${name}</div><div class="sub">${bar(pct)} ${left}s</div></div></div>`;
     }
     out += `<div class="lab">${probeta('a', labA)}<div class="plus">+</div>${probeta('b', labB)}</div>`;
@@ -2174,22 +2395,8 @@
         RECIPES.map((r) => (S.album[r.sp] ? card(SPECIES[r.sp], SPECIES[r.sp].name, S.album[r.sp] > 1 ? ' ×' + S.album[r.sp] : '') : cardOff(SPECIES[r.sp].r))).join('') + '</div>';
       const hy = Object.entries(S.hybrids);
       if (hy.length) html += `<div class="zone-title">crías <span>${hy.length}</span></div><div class="grid">` + hy.map(([n, h]) => card(h, n, h.n > 1 ? ' ×' + h.n : '')).join('') + '</div>';
-    } else if (kind === 'egg') {
-      const full = S.carps.length >= capacity();
-      const pend = S.eggs.map((e) => `<div>${e.lab ? 'laboratorio · ' + (e.sp ? '???' : e.hy.name) : e.hy ? 'cría · ' + e.hy.name : e.world ? WORLDS.find((w) => w.id === e.world).name : ZONES[e.zone].name} · ${Math.max(0, Math.ceil((e.ready - Date.now()) / 1000))}s</div>`).join('');
-      const note = light.night > 0.5 ? '<div class="sub">de noche salen más carpas raras</div>' : '';
-      html = `<div class="zone-title">huevos <span>${S.carps.length}/${capacity()} carpas</span></div>${note}` + ZONES.map((z, i) => {
-        if (!S.unlocked[i]) return '';
-        if (i === PORTAL) {
-          const w = worldToday(), open = portalOpen();
-          return `<div class="row"><pre style="color:${w.color}">  .--.  \n ( @@ ) \n  '--'  </pre>
-            <div><div class="nm">Huevo de otro mundo</div><div class="sub">hoy: ${w.name} · ${Math.round(EGG_TIME(i))}s</div></div>
-            <button data-egg="${i}" ${!open || S.perlas < z.egg || full ? 'disabled' : ''}>${full ? 'llenos' : open ? fmt(z.egg) + ' perlas' : 'abre a las ' + portalNext()}</button></div>`;
-        }
-        return `<div class="row"><pre>  .--.  \n (    ) \n  '--'  </pre>
-          <div><div class="nm">${z.name}</div><div class="sub">${Math.round(EGG_TIME(i))}s</div></div>
-          <button data-egg="${i}" ${S.perlas < z.egg || full ? 'disabled' : ''}>${full ? 'llenos' : fmt(z.egg) + ' perlas'}</button></div>`;
-      }).join('') + `<div class="egg-list">${pend}</div>`;
+    } else if (kind === 'gacha') {
+      html = gachaHtml();
     } else if (kind === 'upgrades') {
       html = `<div class="zone-title">mejoras</div><div class="row"><pre class="lv">${S.lab.built ? ' ok ' : '    '}</pre>
           <div><div class="nm">Laboratorio</div><div class="sub">${S.lab.built ? 'en el islote del Estanque' : 'mezcla carpas y descubre criaturas'}</div></div>
@@ -2239,7 +2446,7 @@
             <dt>mezcla</dt><dd>${breedBtn}</dd>
           </dl>
           <button class="release ${armed ? 'armed' : ''}" data-release ${last ? 'disabled' : ''}>${label}</button>
-          <div class="note">soltarla deja hueco para otro huevo; sigue contando en el álbum</div>
+          <div class="note">soltarla deja hueco para otra carpa; sigue contando en el álbum</div>
         </div>`;
       }
     }
@@ -2252,13 +2459,17 @@
     if (kind !== 'carp') releaseArm = null;
     lastHtml = '';
     renderPanel(kind); panel.hidden = false;
-    clearInterval(tickTimer); tickTimer = setInterval(() => { if (['egg', 'carp', 'quests', 'upgrades', 'lab'].includes(openPanel)) renderPanel(openPanel); }, 1000);
+    clearInterval(tickTimer); tickTimer = setInterval(() => { if (['gacha', 'carp', 'quests', 'upgrades', 'lab'].includes(openPanel)) renderPanel(openPanel); }, 1000);
   }
   function hide() { panel.hidden = true; openPanel = null; releaseArm = null; lastHtml = ''; clearInterval(tickTimer); }
 
   $('#info').addEventListener('click', () => { if (selected) { sheetCarp = selected; releaseArm = null; show('carp'); } });
   window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) hide(); });
-  document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => { SOUND.start(); show(b.dataset.p); }));
+  document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => {
+    SOUND.start();
+    if (b.dataset.p === 'gacha') { const zc = MAP.zoneAt(cam.x, cam.y); openGacha(zc < MAIN && S.unlocked[zc] ? zc : 0); return; }     // el nenúfar de la zona que estás mirando
+    show(b.dataset.p);
+  }));
   $('#close').addEventListener('click', hide);
   panel.addEventListener('pointerdown', (e) => { if (e.target === panel) hide(); });
 
@@ -2300,13 +2511,12 @@
       sheetCarp = null; hide();
       toast(`${spOf(c).name} vuelve al río · +${fmt(v)} perlas`, RARITY[spOf(c).r].c, 2600);
       refreshHud(); refreshInfo(); save();
-    } else if (b.dataset.egg != null) {
-      const i = +b.dataset.egg, z = ZONES[i];
-      if (S.perlas >= z.egg && S.carps.length < capacity()) {
-        if (i === PORTAL && !portalOpen()) return;
-        S.perlas -= z.egg; S.eggs.push({ zone: i, ready: Date.now() + EGG_TIME(i) * 1000, world: i === PORTAL ? worldToday().id : undefined });
-        refreshHud(); save(); renderPanel('egg');
-      }
+    } else if (b.dataset.pull != null) {
+      startPull(gachaZone, +b.dataset.pull, null);
+    } else if (b.dataset.free != null) {
+      startPull(gachaZone, 1, 'free');
+    } else if (b.dataset.ficha != null) {
+      startPull(gachaZone, 1, 'ficha');
     } else if (b.dataset.up != null) {
       const u = UPGRADES.find((x) => x.id === b.dataset.up), n = lvl(u.id);
       if (n < u.cost.length && S.perlas >= u.cost[n]) {
@@ -2347,6 +2557,9 @@
 
   ensureQuests();
   resize(); refreshHud(); refreshInfo();
+  if (S.gacha.out.length) flushOut();
+  if (AWAY > 0) gainFichas(AWAY);
+  dailyFichas();
   if (DEMO !== null) { document.title = 'Estanque · muestra'; toast('partida de muestra · no se guarda', '#ffb703', 4000); }
   if (offline > 0 && AWAY > 60) { toast(`mientras no estabas · +${fmt(offline)} perlas`, '#fff1a8', 4000); save(); }
 

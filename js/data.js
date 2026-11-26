@@ -80,7 +80,7 @@ const DATA = (() => {
   const UPGRADES = [
     { id: 'feeder', name: 'Comedero automático', cost: [150, 900, 4000], desc: ['echa una bolita cada 25 s', 'cada 16 s', 'cada 10 s'] },
     { id: 'net', name: 'Red de perlas', cost: [200, 1200, 5000], desc: ['recoge las perlas cada 30 s', 'cada 18 s', 'cada 10 s'] },
-    { id: 'incub', name: 'Incubadora', cost: [120, 700, 3500], desc: ['huevos un 30 % más rápidos', 'un 50 %', 'un 70 %'] },
+    { id: 'amuleto', name: 'Amuleto de la suerte', cost: [120, 700, 3500], desc: ['las tiradas cuestan un 10 % menos', 'un 20 %', 'un 30 %'] },
     { id: 'cap', name: 'Estanque más hondo', cost: [300, 1500, 6000], desc: ['+3 carpas de cupo', '+6', '+9'] },
     { id: 'bag', name: 'Saco de comida', cost: [100, 600, 3000], desc: ['16 bolitas y salen antes', '20', '24'] },
   ];
@@ -89,7 +89,7 @@ const DATA = (() => {
   const QUESTS = [
     { id: 'feed', text: 'Alimenta a tus carpas', n: 15 },
     { id: 'pearls', text: 'Recoge perlas', n: 60 },
-    { id: 'hatch', text: 'Abre huevos', n: 2 },
+    { id: 'hatch', text: 'Abre cápsulas', n: 2 },
     { id: 'grow', text: 'Haz crecer una carpa', n: 1 },
     { id: 'fortune', text: 'Atrapa la carpa de la fortuna', n: 1 },
     { id: 'heron', text: 'Espanta a la garza', n: 1 },
@@ -97,21 +97,21 @@ const DATA = (() => {
     { id: 'breed', text: 'Mezcla dos carpas en el laboratorio', n: 1 },
   ];
 
-  // cost = perlas para desbloquear · egg = precio del huevo · pool = especies que pueden salir
+  // cost = perlas para desbloquear · pull = precio de una tirada · pool = especies que pueden salir
   const ZONES = [
-    { id: 'estanque',  name: 'Estanque',          cost: 0,     egg: 30,   bg: '#07131c', water: '#2f7fa8', shore: '#6b5b45', grass: '#3d6b3a',
+    { id: 'estanque',  name: 'Estanque',          cost: 0,     pull: 30,   bg: '#07131c', water: '#2f7fa8', shore: '#6b5b45', grass: '#3d6b3a',
       pool: ['gris', 'naranja', 'kohaku', 'shiro', 'ogon'] },
-    { id: 'nenufares', name: 'Nenúfares',         cost: 120,   egg: 120,  bg: '#07170f', water: '#2f9a78', shore: '#5d6b3a', grass: '#3f8a3a',
+    { id: 'nenufares', name: 'Nenúfares',         cost: 120,   pull: 120,  bg: '#07170f', water: '#2f9a78', shore: '#5d6b3a', grass: '#3f8a3a',
       pool: ['musgo', 'asagi', 'sanke', 'shusui', 'kujaku'] },
-    { id: 'cascada',   name: 'Cascada',           cost: 500,   egg: 300,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
+    { id: 'cascada',   name: 'Cascada',           cost: 500,   pull: 300,  bg: '#08141f', water: '#4aa3d6', shore: '#56606b', grass: '#3d6b5a',
       pool: ['plateada', 'benigoi', 'showa', 'platinum', 'tancho'] },
-    { id: 'cueva',     name: 'Cueva',             cost: 1500,  egg: 800,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
+    { id: 'cueva',     name: 'Cueva',             cost: 1500,  pull: 800,  bg: '#0c0912', water: '#2b6a7a', shore: '#4a4058', grass: '#3b3448',
       pool: ['ciega', 'cristal', 'brasa', 'fantasma', 'abisal'] },
-    { id: 'luna',      name: 'Lago de la Luna',   cost: 4000,  egg: 2000, bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
+    { id: 'luna',      name: 'Lago de la Luna',   cost: 4000,  pull: 2000, bg: '#05071a', water: '#3b4fa8', shore: '#3d4366', grass: '#4a5a9a',
       pool: ['rocio', 'lunar', 'kumonryu', 'medianoche', 'lunallena'] },
-    { id: 'templo',    name: 'Templo sumergido',  cost: 10000, egg: 5000, bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
+    { id: 'templo',    name: 'Templo sumergido',  cost: 10000, pull: 5000, bg: '#06151a', water: '#1f8a8a', shore: '#7a6a45', grass: '#2e8a6a',
       pool: ['piedra', 'jade', 'ambar', 'dragon', 'celestial'] },
-    { id: 'portal',    name: 'Portal',            cost: 25000, egg: 8000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
+    { id: 'portal',    name: 'Portal',            cost: 25000, pull: 8000, bg: '#0b0614', water: '#5a3fa0', shore: '#4a3f66', grass: '#3a2f5a', portal: true,
       pool: ['ceniza', 'magma', 'escarcha', 'hielo', 'nebulosa', 'estelar', 'estatica', 'glitch'] },
   ];
 
@@ -124,5 +124,17 @@ const DATA = (() => {
     { id: 'roto', name: 'Mundo roto', color: '#00ff9c', pool: ['estatica', 'glitch'] },
   ];
 
-  return { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS };
+  // Gachapon: las carpas salen de los nenúfares (uno por zona). rates = % de cada rareza, en el mismo orden que RARITY.
+  // Garantía por nenúfar: cuenta las tiradas desde la última carpa de esa rareza (o mejor) y la fuerza al llegar al tope.
+  // x10 = diez tiradas por el precio de diez, con al menos una rara o mejor.
+  const GACHA = {
+    rates: [56, 28, 11, 4.5, 0.5],
+    pity: [{ min: 2, every: 10 }, { min: 3, every: 50 }, { min: 4, every: 200 }],
+    discount: [0, 0.1, 0.2, 0.3],            // del amuleto de la suerte, por nivel
+    history: 40,
+    // fichas: una tirada gratis (solo en las zonas del Estanque a la Cueva, para que no valgan más que lo que cuestan)
+    fichas: { max: 5, every: 1200, daily: 2, maxZone: 3 },
+  };
+
+  return { RARITY, SPECIES, ZONES, SECRETS, UPGRADES, QUESTS, LAB, RECIPES, WORLDS, GACHA };
 })();
